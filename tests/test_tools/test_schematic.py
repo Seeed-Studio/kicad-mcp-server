@@ -5,6 +5,7 @@ from pathlib import Path
 
 from kicad_mcp_server.parsers.schematic_parser import SchematicParser
 from kicad_mcp_server.tools import schematic
+from kicad_mcp_server.tools.netlist import _find_root_schematic
 
 
 @pytest.fixture
@@ -127,3 +128,39 @@ class TestSchematicTools:
 
         assert "Example Project" in result
         assert "Components by Type" in result
+
+
+class TestFindRootSchematic:
+    """Test _find_root_schematic helper."""
+
+    def test_is_root(self, tmp_path):
+        """Root schematic (same stem as .kicad_pro) returns None."""
+        (tmp_path / "project.kicad_pro").touch()
+        (tmp_path / "project.kicad_sch").touch()
+        assert _find_root_schematic(tmp_path / "project.kicad_sch") is None
+
+    def test_is_subsheet(self, tmp_path):
+        """Sub-sheet (different stem) returns root schematic path."""
+        (tmp_path / "project.kicad_pro").touch()
+        (tmp_path / "project.kicad_sch").touch()
+        (tmp_path / "subsheet.kicad_sch").touch()
+        result = _find_root_schematic(tmp_path / "subsheet.kicad_sch")
+        assert result == tmp_path / "project.kicad_sch"
+
+    def test_no_pro_file(self, tmp_path):
+        """No .kicad_pro file returns None."""
+        (tmp_path / "sheet.kicad_sch").touch()
+        assert _find_root_schematic(tmp_path / "sheet.kicad_sch") is None
+
+    def test_multiple_pro_files(self, tmp_path):
+        """Multiple .kicad_pro files returns None (ambiguous)."""
+        (tmp_path / "project_a.kicad_pro").touch()
+        (tmp_path / "project_b.kicad_pro").touch()
+        (tmp_path / "subsheet.kicad_sch").touch()
+        assert _find_root_schematic(tmp_path / "subsheet.kicad_sch") is None
+
+    def test_root_sch_missing(self, tmp_path):
+        """Pro file exists but matching .kicad_sch doesn't — returns None."""
+        (tmp_path / "project.kicad_pro").touch()
+        (tmp_path / "subsheet.kicad_sch").touch()
+        assert _find_root_schematic(tmp_path / "subsheet.kicad_sch") is None

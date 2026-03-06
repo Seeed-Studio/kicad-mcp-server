@@ -2,19 +2,20 @@
 
 import subprocess
 from pathlib import Path
+from typing import Optional
 from ..server import mcp
 from ..parsers.netlist_parser import NetlistParser
 
 
-def _find_root_schematic(sch_path: Path) -> Path | None:
+def _find_root_schematic(sch_path: Path) -> Optional[Path]:
     """If sch_path is a sub-sheet, return the root schematic instead.
 
     KiCad convention: root schematic has the same stem as the .kicad_pro file.
-    kicad-cli silently drops unnamed local nets when exporting from a sub-sheet,
-    so we detect this and redirect to the root schematic.
+    Sub-sheets lack the hierarchy context needed to resolve unnamed wire-only
+    nets, so we redirect to the root schematic for complete netlist export.
     """
     pro_files = list(sch_path.parent.glob("*.kicad_pro"))
-    if not pro_files:
+    if len(pro_files) != 1:
         return None
     root_sch = pro_files[0].with_suffix(".kicad_sch")
     if root_sch.exists() and root_sch.resolve() != sch_path.resolve():
@@ -40,15 +41,14 @@ async def generate_netlist(
             return f"❌ Schematic file not found: {schematic_path}"
 
         # Detect sub-sheet and redirect to root schematic.
-        # kicad-cli silently produces incomplete netlists for sub-sheets
-        # (unnamed wire-only nets are dropped without warning).
+        # Sub-sheets lack hierarchy context to resolve unnamed wire-only nets.
         subsheet_note = ""
         root_sch = _find_root_schematic(sch_path)
         if root_sch:
             subsheet_note = (
                 f"\n\n⚠️ **Note:** `{sch_path.name}` is a hierarchical sub-sheet. "
                 f"Switched to root schematic `{root_sch.name}` for complete netlist "
-                f"(kicad-cli drops unnamed local nets when exporting sub-sheets directly)."
+                f"(unnamed wire-only nets require full hierarchy context to resolve)."
             )
             sch_path = root_sch
 
