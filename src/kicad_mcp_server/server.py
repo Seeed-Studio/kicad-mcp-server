@@ -29,6 +29,10 @@ from .tools import (
     pcb,
     pcb_layout,
     netlist,
+    validation,
+    pin_analysis,
+    device_tree,
+    test_generation,
 )
 
 # Resources
