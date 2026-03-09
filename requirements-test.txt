@@ -1,0 +1,24 @@
+# Testing dependencies for hardware testing
+# These are optional dependencies for running hardware tests with actual hardware interaction
+
+# Python testing framework
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+pytest-mock>=3.12.0
+
+# Hardware interaction libraries (optional)
+# Raspberry Pi GPIO
+RPi.GPIO>=0.7.0; platform_machine == "aarch64" or platform_machine == "armv7l"
+
+# I2C communication
+smbus2>=0.4.0
+
+# SPI communication
+spidev>=3.5; platform_machine == "aarch64" or platform_machine == "armv7l"
+
+# Serial communication
+pyserial>=3.5
+
+# Mock hardware for testing
+mock>=4.0.0
