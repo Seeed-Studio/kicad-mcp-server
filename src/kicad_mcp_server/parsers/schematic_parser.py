@@ -130,7 +130,20 @@ class SchematicParser:
         # In production, use kicad-skip library
         import re
 
-        content = self.file_path.read_text()
+        # Try multiple encodings to handle different KiCad file formats
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+        content = None
+
+        for encoding in encodings:
+            try:
+                content = self.file_path.read_text(encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+
+        if content is None:
+            # Last resort: read with error handling
+            content = self.file_path.read_text(encoding='utf-8', errors='ignore')
 
         # Extract basic information using regex patterns
         # This is a simplified implementation

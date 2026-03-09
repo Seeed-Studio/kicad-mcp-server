@@ -25,7 +25,9 @@ mcp = FastMCP(
 from .tools import (
     project,
     schematic,
+    schematic_search,
     schematic_editor,
+    hierarchical_analysis,
     pcb,
     pcb_layout,
     netlist,
