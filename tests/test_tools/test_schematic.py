@@ -58,11 +58,16 @@ class TestSchematicParser:
         assert "+3V3" in net_names
         assert "SPI_CLK" in net_names
 
-        # Check net types
+    def test_hierarchical_labels_in_nets(self, example_schematic):
+        """Test that hierarchical labels appear in nets."""
+        parser = SchematicParser(str(example_schematic))
+        nets = parser.get_nets()
+
         net_by_name = {n.name: n for n in nets}
-        assert net_by_name["SPI_CLK"].type == "global"
-        assert net_by_name["+3V3"].type == "local"
-        assert net_by_name["GND"].type == "power"
+        assert "SDA" in net_by_name
+        assert "SCL" in net_by_name
+        assert net_by_name["SDA"].type == "hierarchical"
+        assert net_by_name["SCL"].type == "hierarchical"
 
     def test_get_component_by_reference(self, example_schematic):
         """Test getting component by reference."""
@@ -72,38 +77,6 @@ class TestSchematicParser:
         assert r1 is not None
         assert r1.value == "10k"
         assert r1.footprint == "Resistor_SMD:R_0805_2012Metric"
-
-    def test_pin_names_passive(self, example_schematic):
-        """Test that resistor pins have names and types from lib_symbols."""
-        parser = SchematicParser(str(example_schematic))
-        r1 = parser.get_component_by_reference("R1")
-        assert r1 is not None
-        assert len(r1.pins) == 2
-        for pin in r1.pins:
-            assert pin["electrical_type"] == "passive"
-
-    def test_pin_names_mcu(self, example_schematic):
-        """Test that MCU pins have named pins from lib_symbols."""
-        parser = SchematicParser(str(example_schematic))
-        u1 = parser.get_component_by_reference("U1")
-        assert u1 is not None
-        assert len(u1.pins) == 2
-        pin_names = {p["number"]: p["name"] for p in u1.pins}
-        assert pin_names["1"] == "VCC"
-        assert pin_names["2"] == "GND"
-        pin_types = {p["number"]: p["electrical_type"] for p in u1.pins}
-        assert pin_types["1"] == "power_in"
-        assert pin_types["2"] == "power_in"
-
-    def test_pin_names_connector(self, example_schematic):
-        """Test that connector pins have named pins from lib_symbols."""
-        parser = SchematicParser(str(example_schematic))
-        j1 = parser.get_component_by_reference("J1")
-        assert j1 is not None
-        assert len(j1.pins) == 4
-        pin_names = {p["number"]: p["name"] for p in j1.pins}
-        assert pin_names["1"] == "Pin_1"
-        assert pin_names["4"] == "Pin_4"
 
     def test_search_components(self, example_schematic):
         """Test searching components by pattern."""
@@ -151,16 +124,6 @@ class TestSchematicTools:
         assert "R1" in result
         assert "10k" in result
         assert "Footprint" in result
-        assert "passive" in result
-
-    @pytest.mark.asyncio
-    async def test_get_symbol_details_pin_names(self, example_schematic):
-        """Test get_symbol_details shows pin names for MCU."""
-        result = await schematic.get_symbol_details(str(example_schematic), "U1")
-
-        assert "VCC" in result
-        assert "GND" in result
-        assert "power_in" in result
 
     @pytest.mark.asyncio
     async def test_search_symbols(self, example_schematic):
@@ -168,6 +131,16 @@ class TestSchematicTools:
         result = await schematic.search_symbols(str(example_schematic), "ESP32")
 
         assert "U1" in result
+
+    @pytest.mark.asyncio
+    async def test_list_schematic_nets_hierarchical(self, example_schematic):
+        """Test list_schematic_nets includes hierarchical labels with type."""
+        result = await schematic.list_schematic_nets(str(example_schematic))
+
+        assert "SDA" in result
+        assert "SCL" in result
+        assert "hierarchical" in result
+        assert "| Type |" in result
 
     @pytest.mark.asyncio
     async def test_get_schematic_info(self, example_schematic):

@@ -398,6 +398,20 @@ class SchematicParser:
                     "position": (x, y),
                 }
 
+        # Extract hierarchical labels (connections to parent/child sheets)
+        h_label_pattern = r'\(hierarchical_label\s+"([^"]+)"[\s\S]*?\(at\s+([\d.]+)\s+([\d.]+)[^\)]*\)'
+        for match in re.finditer(h_label_pattern, content):
+            name = match.group(1)
+            if name not in nets:  # Avoid duplicates
+                x = float(match.group(2))
+                y = float(match.group(3))
+                nets[name] = {
+                    "name": name,
+                    "code": len(nets),
+                    "type": "hierarchical",
+                    "position": (x, y),
+                }
+
         # Extract power port labels (like +3V3, GND, etc.)
         power_pattern = r'\(symbol\s+\(lib_id\s+"power:([^"]+)"[\s\S]*?\(at\s+([\d.]+)\s+([\d.]+)'
         for match in re.finditer(power_pattern, content):

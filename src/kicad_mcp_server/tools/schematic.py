@@ -213,12 +213,12 @@ async def list_schematic_nets(
             f"# Nets in {file_path}",
             f"Total: {len(nets)} net(s)",
             "",
-            "| Net Name | Code |",
-            "|----------|------|",
+            "| Net Name | Type | Code |",
+            "|----------|------|------|",
         ]
 
         for net in sorted(nets, key=lambda n: n.name):
-            lines.append(f"| {net.name} | {net.code} |")
+            lines.append(f"| {net.name} | {net.type} | {net.code} |")
 
         return "\n".join(lines)
 
