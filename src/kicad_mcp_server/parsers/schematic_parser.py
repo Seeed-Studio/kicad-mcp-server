@@ -97,6 +97,36 @@ class SchematicPin:
         )
 
 
+def _read_file_with_encoding_fallback(file_path: Path) -> str:
+    """Read file with multiple encoding fallback support.
+
+    Args:
+        file_path: Path to the file to read
+
+    Returns:
+        File content as string
+
+    Note:
+        Tries multiple encodings to handle different KiCad file formats
+        and potential encoding issues.
+    """
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    content = None
+
+    for encoding in encodings:
+        try:
+            content = file_path.read_text(encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if content is None:
+        # Last resort: read with error handling
+        content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+    return content
+
+
 class SchematicParser:
     """Parser for KiCad schematic files (.kicad_sch)."""
 
@@ -131,20 +161,8 @@ class SchematicParser:
         # In production, use kicad-skip library
         import re
 
-        # Try multiple encodings to handle different KiCad file formats
-        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-        content = None
-
-        for encoding in encodings:
-            try:
-                content = self.file_path.read_text(encoding=encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-
-        if content is None:
-            # Last resort: read with error handling
-            content = self.file_path.read_text(encoding='utf-8', errors='ignore')
+        # Read file with encoding fallback support
+        content = _read_file_with_encoding_fallback(self.file_path)
 
         # Parse lib_symbols first so _parse_components can use it
         self._lib_symbols_lookup = self._parse_lib_symbols(content)
@@ -531,7 +549,7 @@ class SchematicParser:
                 "connected_components": ["comp1", "comp2"]
             }
         """
-        content = self.file_path.read_text()
+        content = _read_file_with_encoding_fallback(self.file_path)
 
         # Find the component instance
         comp_pattern = rf'\(symbol\s+[\s\S]*?\(property\s+"Reference"\s+"{re.escape(reference)}"'
@@ -652,7 +670,7 @@ class SchematicParser:
         """
         import re
 
-        content = self.file_path.read_text()
+        content = _read_file_with_encoding_fallback(self.file_path)
 
         # Find all wire segments
         wire_pattern = r'\(wire\s+\(pts\s+\(xy\s+([\d.]+)\s+([\d.]+)\)\s+\(xy\s+([\d.]+)\s+([\d.]+)\)'
@@ -719,7 +737,7 @@ class SchematicParser:
         network = self.build_wire_network()
 
         # Find all labels
-        content = self.file_path.read_text()
+        content = _read_file_with_encoding_fallback(self.file_path)
 
         # Find hierarchical labels
         h_labels = []

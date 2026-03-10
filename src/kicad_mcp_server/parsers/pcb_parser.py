@@ -38,6 +38,36 @@ class PCBFootprint:
         )
 
 
+def _read_file_with_encoding_fallback(file_path: Path) -> str:
+    """Read file with multiple encoding fallback support.
+
+    Args:
+        file_path: Path to the file to read
+
+    Returns:
+        File content as string
+
+    Note:
+        Tries multiple encodings to handle different KiCad file formats
+        and potential encoding issues.
+    """
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    content = None
+
+    for encoding in encodings:
+        try:
+            content = file_path.read_text(encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if content is None:
+        # Last resort: read with error handling
+        content = file_path.read_text(encoding='utf-8', errors='ignore')
+
+    return content
+
+
 class PCBParser:
     """Parser for KiCad PCB files (.kicad_pcb)."""
 
@@ -63,7 +93,7 @@ class PCBParser:
         if self._data is not None:
             return self._data
 
-        content = self.file_path.read_text()
+        content = _read_file_with_encoding_fallback(self.file_path)
 
         # Extract basic information
         self._data = {
