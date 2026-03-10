@@ -56,6 +56,13 @@ class TestSchematicParser:
         net_names = [n.name for n in nets]
         assert "GND" in net_names
         assert "+3V3" in net_names
+        assert "SPI_CLK" in net_names
+
+        # Check net types
+        net_by_name = {n.name: n for n in nets}
+        assert net_by_name["SPI_CLK"].type == "global"
+        assert net_by_name["+3V3"].type == "local"
+        assert net_by_name["GND"].type == "power"
 
     def test_get_component_by_reference(self, example_schematic):
         """Test getting component by reference."""
@@ -65,6 +72,38 @@ class TestSchematicParser:
         assert r1 is not None
         assert r1.value == "10k"
         assert r1.footprint == "Resistor_SMD:R_0805_2012Metric"
+
+    def test_pin_names_passive(self, example_schematic):
+        """Test that resistor pins have names and types from lib_symbols."""
+        parser = SchematicParser(str(example_schematic))
+        r1 = parser.get_component_by_reference("R1")
+        assert r1 is not None
+        assert len(r1.pins) == 2
+        for pin in r1.pins:
+            assert pin["electrical_type"] == "passive"
+
+    def test_pin_names_mcu(self, example_schematic):
+        """Test that MCU pins have named pins from lib_symbols."""
+        parser = SchematicParser(str(example_schematic))
+        u1 = parser.get_component_by_reference("U1")
+        assert u1 is not None
+        assert len(u1.pins) == 2
+        pin_names = {p["number"]: p["name"] for p in u1.pins}
+        assert pin_names["1"] == "VCC"
+        assert pin_names["2"] == "GND"
+        pin_types = {p["number"]: p["electrical_type"] for p in u1.pins}
+        assert pin_types["1"] == "power_in"
+        assert pin_types["2"] == "power_in"
+
+    def test_pin_names_connector(self, example_schematic):
+        """Test that connector pins have named pins from lib_symbols."""
+        parser = SchematicParser(str(example_schematic))
+        j1 = parser.get_component_by_reference("J1")
+        assert j1 is not None
+        assert len(j1.pins) == 4
+        pin_names = {p["number"]: p["name"] for p in j1.pins}
+        assert pin_names["1"] == "Pin_1"
+        assert pin_names["4"] == "Pin_4"
 
     def test_search_components(self, example_schematic):
         """Test searching components by pattern."""
@@ -81,7 +120,7 @@ class TestSchematicTools:
     @pytest.mark.asyncio
     async def test_list_schematic_components(self, example_schematic):
         """Test list_schematic_components tool."""
-        result = await schematic.list_schematic_components.fn(str(example_schematic))
+        result = await schematic.list_schematic_components(str(example_schematic))
 
         assert "R1" in result
         assert "10k" in result
@@ -93,37 +132,47 @@ class TestSchematicTools:
     @pytest.mark.asyncio
     async def test_filter_dnp_true(self, example_schematic):
         """Test filtering for DNP-only components."""
-        result = await schematic.list_schematic_components.fn(str(example_schematic), filter_dnp=True)
+        result = await schematic.list_schematic_components(str(example_schematic), filter_dnp=True)
         assert "R3" in result
         assert "R1" not in result
 
     @pytest.mark.asyncio
     async def test_filter_dnp_false(self, example_schematic):
         """Test filtering for non-DNP components."""
-        result = await schematic.list_schematic_components.fn(str(example_schematic), filter_dnp=False)
+        result = await schematic.list_schematic_components(str(example_schematic), filter_dnp=False)
         assert "R1" in result
         assert "R3" not in result
 
     @pytest.mark.asyncio
     async def test_get_symbol_details(self, example_schematic):
         """Test get_symbol_details tool."""
-        result = await schematic.get_symbol_details.fn(str(example_schematic), "R1")
+        result = await schematic.get_symbol_details(str(example_schematic), "R1")
 
         assert "R1" in result
         assert "10k" in result
         assert "Footprint" in result
+        assert "passive" in result
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_details_pin_names(self, example_schematic):
+        """Test get_symbol_details shows pin names for MCU."""
+        result = await schematic.get_symbol_details(str(example_schematic), "U1")
+
+        assert "VCC" in result
+        assert "GND" in result
+        assert "power_in" in result
 
     @pytest.mark.asyncio
     async def test_search_symbols(self, example_schematic):
         """Test search_symbols tool."""
-        result = await schematic.search_symbols.fn(str(example_schematic), "ESP32")
+        result = await schematic.search_symbols(str(example_schematic), "ESP32")
 
         assert "U1" in result
 
     @pytest.mark.asyncio
     async def test_get_schematic_info(self, example_schematic):
         """Test get_schematic_info tool."""
-        result = await schematic.get_schematic_info.fn(str(example_schematic))
+        result = await schematic.get_schematic_info(str(example_schematic))
 
         assert "Example Project" in result
         assert "Components by Type" in result

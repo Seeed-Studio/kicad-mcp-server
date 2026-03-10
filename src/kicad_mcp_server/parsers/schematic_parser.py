@@ -112,6 +112,7 @@ class SchematicParser:
         """
         self.file_path = validate_kicad_file(file_path, ".kicad_sch")
         self._data: Optional[dict[str, Any]] = None
+        self._lib_symbols_lookup: dict[str, dict[str, dict[str, str]]] = {}
 
     def _parse_file(self) -> dict[str, Any]:
         """Parse the schematic file.
@@ -145,6 +146,9 @@ class SchematicParser:
             # Last resort: read with error handling
             content = self.file_path.read_text(encoding='utf-8', errors='ignore')
 
+        # Parse lib_symbols first so _parse_components can use it
+        self._lib_symbols_lookup = self._parse_lib_symbols(content)
+
         # Extract basic information using regex patterns
         # This is a simplified implementation
         self._data = {
@@ -156,6 +160,81 @@ class SchematicParser:
         }
 
         return self._data
+
+    def _parse_lib_symbols(self, content: str) -> dict[str, dict[str, dict[str, str]]]:
+        """Parse lib_symbols section to extract pin names and electrical types.
+
+        Returns:
+            {lib_id: {pin_number: {"name": str, "electrical_type": str}}}
+        """
+        result = {}
+
+        # Find the (lib_symbols ...) block
+        ls_match = re.search(r'\(lib_symbols\b', content)
+        if not ls_match:
+            return result
+
+        # Extract the full lib_symbols block by counting parens
+        start = ls_match.start()
+        depth = 0
+        i = start
+        while i < len(content):
+            if content[i] == '(':
+                depth += 1
+            elif content[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        ls_block = content[start:i + 1]
+
+        # Find top-level symbols (contain ":" like "Device:R") and extract their blocks
+        lines = ls_block.split('\n')
+        li = 0
+        while li < len(lines):
+            line = lines[li].strip()
+            top_match = re.match(r'\(symbol\s+"([^"]*:[^"]*)"', line)
+            if top_match:
+                lib_id = top_match.group(1)
+                # Extract full block for this top-level symbol
+                sym_lines = []
+                depth = 0
+                j = li
+                while j < len(lines):
+                    cur = lines[j]
+                    depth += cur.count('(') - cur.count(')')
+                    sym_lines.append(cur)
+                    if depth == 0 and len(sym_lines) > 1:
+                        break
+                    j += 1
+                    if j - li > 500:
+                        break
+                sym_block = '\n'.join(sym_lines)
+
+                # Extract pins from the entire symbol block (including sub-symbols)
+                # Pin format: (pin <elec_type> <graphic> ... (name "X") (number "N"))
+                pin_pattern = re.compile(
+                    r'\(pin\s+(\w+)\s+\w+\s[\s\S]*?'
+                    r'\(name\s+"([^"]*)"[\s\S]*?\)'
+                    r'\s*\(number\s+"([^"]*)"',
+                )
+                pins = {}
+                for pin_match in pin_pattern.finditer(sym_block):
+                    elec_type = pin_match.group(1)
+                    name = pin_match.group(2)
+                    number = pin_match.group(3)
+                    pins[number] = {
+                        "name": name,
+                        "electrical_type": elec_type,
+                    }
+                if pins:
+                    result[lib_id] = pins
+
+                li = j + 1
+            else:
+                li += 1
+
+        return result
 
     def _parse_title_block(self, content: str) -> dict[str, str]:
         """Parse title block from schematic."""
@@ -241,10 +320,17 @@ class SchematicParser:
                 fp_match = re.search(r'\(property\s+"Footprint"\s+"([^"]+)"', block_text)
                 footprint = fp_match.group(1) if fp_match else None
 
-                # Extract pins
+                # Extract pins and enrich with lib_symbols data
                 pins = []
-                for pin_match in re.finditer(r'\(pin\s+"(\d+)"', block_text):
-                    pins.append({"number": pin_match.group(1)})
+                lib_pin_data = self._lib_symbols_lookup.get(lib_id, {})
+                for pin_match in re.finditer(r'\(pin\s+"([^"]+)"', block_text):
+                    pin_num = pin_match.group(1)
+                    pin_info = lib_pin_data.get(pin_num, {})
+                    pins.append({
+                        "number": pin_num,
+                        "name": pin_info.get("name", ""),
+                        "electrical_type": pin_info.get("electrical_type", ""),
+                    })
 
                 # Extract component flags
                 flags = dict(KICAD_FLAG_DEFAULTS)
