@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..utils.file_handlers import validate_kicad_file
 
@@ -19,10 +19,10 @@ class SchematicComponent:
     reference: str
     value: str
     library_id: str
-    footprint: Optional[str] = None
+    footprint: str | None = None
     properties: dict[str, str] = field(default_factory=dict)
     position: tuple[float, float] = (0.0, 0.0)
-    unit: Optional[int] = None
+    unit: int | None = None
     pins: list[dict[str, Any]] = field(default_factory=list)
     flags: dict[str, bool] = field(default_factory=lambda: dict(KICAD_FLAG_DEFAULTS))
 
@@ -141,7 +141,7 @@ class SchematicParser:
             ValueError: If file is not a .kicad_sch file
         """
         self.file_path = validate_kicad_file(file_path, ".kicad_sch")
-        self._data: Optional[dict[str, Any]] = None
+        self._data: dict[str, Any] | None = None
         self._lib_symbols_lookup: dict[str, dict[str, dict[str, str]]] = {}
 
     def _parse_file(self) -> dict[str, Any]:
@@ -159,7 +159,6 @@ class SchematicParser:
 
         # Simple text-based parser for .kicad_sch (S-expression format)
         # In production, use kicad-skip library
-        import re
 
         # Read file with encoding fallback support
         content = _read_file_with_encoding_fallback(self.file_path)
@@ -322,9 +321,9 @@ class SchematicParser:
                 if at_match:
                     x = float(at_match.group(1))
                     y = float(at_match.group(2))
-                    rotation = float(at_match.group(3))
+                    _ = float(at_match.group(3))
                 else:
-                    x, y, rotation = 0.0, 0.0, 0.0
+                    x, y, _ = 0.0, 0.0, 0.0
 
                 # Extract reference
                 ref_match = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', block_text)
@@ -497,7 +496,7 @@ class SchematicParser:
         data = self._parse_file()
         return data["sheets"]
 
-    def get_component_by_reference(self, reference: str) -> Optional[SchematicComponent]:
+    def get_component_by_reference(self, reference: str) -> SchematicComponent | None:
         """Get a component by its reference designator.
 
         Args:
@@ -601,7 +600,7 @@ class SchematicParser:
             labels.append({"name": label_name, "position": (lx, ly), "distance": dist})
 
         # Filter to nearby labels (within 20mm)
-        nearby_labels = [l for l in labels if l["distance"] < 20]
+        nearby_labels = [label for label in labels if label["distance"] < 20]
 
         # Find nearby components (within 15mm)
         components = self.get_components()
@@ -626,7 +625,7 @@ class SchematicParser:
             "nearby_components": nearby_comps[:10],
         }
 
-    def trace_net(self, reference: str, pin_number: Optional[str] = None) -> dict[str, Any]:
+    def trace_net(self, reference: str, pin_number: str | None = None) -> dict[str, Any]:
         """Trace network connections from a component pin.
 
         Args:
@@ -696,8 +695,6 @@ class SchematicParser:
         junction_pattern = r'\(junction\s+\(at\s+([\d.]+)\s+([\d.]+)'
         for match in re.finditer(junction_pattern, content):
             jx, jy = float(match.group(1)), float(match.group(2))
-            jpos = (jx, jy)
-
             # For a junction, all wires meeting at this point should be connected
             # Find all wire endpoints at this position (with small tolerance)
             tolerance = 0.01  # 0.01mm tolerance
@@ -802,7 +799,7 @@ class SchematicParser:
             for label in all_labels:
                 lx, ly = label["position"]
                 dist = ((point[0] - lx)**2 + (point[1] - ly)**2)**0.5
-                if dist < label_tolerance and not any(l["name"] == label["name"] for l in connected_labels):
+                if dist < label_tolerance and not any(lbl["name"] == label["name"] for lbl in connected_labels):
                     connected_labels.append({
                         "name": label["name"],
                         "position": label["position"],

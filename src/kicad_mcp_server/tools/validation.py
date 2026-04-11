@@ -3,13 +3,12 @@
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
 
 from ..models.types import DRCError, ERCError
 from ..server import mcp
 
 
-def _find_root_schematic(sch_path: Path) -> Optional[Path]:
+def _find_root_schematic(sch_path: Path) -> Path | None:
     """If sch_path is a sub-sheet, return the root schematic instead.
 
     KiCad convention: root schematic has the same stem as the .kicad_pro file.

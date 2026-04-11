@@ -1,6 +1,5 @@
 """Main entry point for KiCad MCP Server."""
 
-import sys
 
 
 def main() -> None:

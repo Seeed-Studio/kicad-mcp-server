@@ -1,7 +1,7 @@
 """PCB analysis tools for KiCad MCP Server."""
 
-from ..server import mcp
 from ..parsers.pcb_parser import PCBParser
+from ..server import mcp
 
 
 @mcp.tool()

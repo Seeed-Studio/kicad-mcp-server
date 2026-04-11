@@ -3,17 +3,17 @@
 Uses KiCad's template projects to ensure 100% compatibility.
 """
 
-from pathlib import Path
-from typing import List, Optional
-from ..server import mcp
-import uuid
 import json
-import shutil
 import re
+import shutil
+import uuid
 from datetime import datetime
+from pathlib import Path
+
+from ..server import mcp
 
 
-def _find_kicad_template() -> Optional[Path]:
+def _find_kicad_template() -> Path | None:
     """Find KiCad template directory."""
     possible_templates = [
         Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport/template/Arduino_Mega"),
@@ -94,7 +94,7 @@ After installation, this tool will use KiCad's template to create projects.
         pro_file = path / f"{project_name}.kicad_pro"
 
         if pro_file.exists():
-            with open(pro_file, 'r') as f:
+            with open(pro_file) as f:
                 pro_data = json.load(f)
 
             # Update metadata
@@ -130,7 +130,7 @@ After installation, this tool will use KiCad's template to create projects.
                     # Add company field after title
                     content = re.sub(
                         r'(title "([^"]*)")',
-                        r'\1\n    (company "{}")'.format(company),
+                        rf'\1\n    (company "{company}")',
                         content,
                         count=1
                     )

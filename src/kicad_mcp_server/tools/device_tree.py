@@ -7,16 +7,13 @@ This module provides device tree source (.dts) generation capabilities including
 - SOC-specific device tree generation
 """
 
-import json
 from pathlib import Path
-from typing import Optional
 
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Template
 
 from ..parsers.netlist_parser import NetlistParser
 from ..parsers.schematic_parser import SchematicParser
 from ..server import mcp
-
 
 # Device tree compatible strings database
 DEVICE_TREE_BINDINGS = {
@@ -276,7 +273,7 @@ DEVICE_TREE_TEMPLATES = {
 }
 
 
-def _find_component_binding(component_value: str, component_type: str) -> Optional[dict]:
+def _find_component_binding(component_value: str, component_type: str) -> dict | None:
     """Find device tree binding for a component.
 
     Args:
@@ -304,7 +301,7 @@ def _find_component_binding(component_value: str, component_type: str) -> Option
     return None
 
 
-def _infer_peripheral_type(net_name: str) -> Optional[str]:
+def _infer_peripheral_type(net_name: str) -> str | None:
     """Infer peripheral type from net name.
 
     Args:
@@ -330,7 +327,7 @@ def _infer_peripheral_type(net_name: str) -> Optional[str]:
     return None
 
 
-def _extract_i2c_address_from_net(net_name: str) -> Optional[int]:
+def _extract_i2c_address_from_net(net_name: str) -> int | None:
     """Extract I2C address from net name.
 
     Args:
@@ -421,10 +418,8 @@ Please specify a supported SOC family."""
         for component in components:
             comp_ref = component["reference"]
             comp_value = component.get("value", "")
-            comp_library = component.get("library_id", "")
-
             # Find device tree binding
-            for category, bindings in DEVICE_TREE_BINDINGS.items():
+            for category, _bindings in DEVICE_TREE_BINDINGS.items():
                 binding = _find_component_binding(comp_value, category)
                 if binding:
                     # Get net connections
@@ -441,7 +436,7 @@ Please specify a supported SOC family."""
                                     "peripheral": peripheral_type,
                                     "pin": pin_num,
                                 })
-                        except:
+                        except Exception:
                             continue
 
                     if connections:
@@ -512,7 +507,7 @@ Please specify a supported SOC family."""
                                     "number": pin_num,
                                     "name": f"P{pin_num}",
                                 })
-                    except:
+                    except Exception:
                         continue
 
         # Generate device tree from template
@@ -657,7 +652,7 @@ async def extract_gpio_config(
                                     "net": net_name,
                                     "soc": comp_value,
                                 })
-                    except:
+                    except Exception:
                         continue
 
         if not gpio_configs:
@@ -776,10 +771,8 @@ async def extract_i2c_devices(
         for component in components:
             comp_ref = component["reference"]
             comp_value = component.get("value", "")
-            comp_library = component.get("library_id", "")
-
             # Check if this is an I2C device
-            for category, bindings in DEVICE_TREE_BINDINGS.items():
+            for category, _bindings in DEVICE_TREE_BINDINGS.items():
                 binding = _find_component_binding(comp_value, category)
                 if binding:
                     # Get net connections
@@ -801,7 +794,7 @@ async def extract_i2c_devices(
                                         "pin": pin_num,
                                     })
                                     break
-                        except:
+                        except Exception:
                             continue
 
         if not i2c_devices:
@@ -904,7 +897,7 @@ async def extract_spi_devices(
             comp_value = component.get("value", "")
 
             # Check if this is an SPI device
-            for category, bindings in DEVICE_TREE_BINDINGS.items():
+            for category, _bindings in DEVICE_TREE_BINDINGS.items():
                 binding = _find_component_binding(comp_value, category)
                 if binding:
                     # Get net connections
@@ -923,7 +916,7 @@ async def extract_spi_devices(
                                         "pin": pin_num,
                                     })
                                     break
-                        except:
+                        except Exception:
                             continue
 
         if not spi_devices:
@@ -1065,7 +1058,7 @@ No power management components were found in the schematic.
 
         for comp in power_components[:5]:  # Limit to first 5
             result += f"        {comp['reference'].lower()}: {comp['reference'].lower()} {{\n"
-            result += f"            compatible = \"regulator-fixed\";\n"
+            result += "            compatible = \"regulator-fixed\";\n"
             result += "            regulator-name = \"" + comp['reference'].lower() + "\";\n"
             result += "            regulator-min-microvolt = <3300000>;\n"
             result += "            regulator-max-microvolt = <3300000>;\n"

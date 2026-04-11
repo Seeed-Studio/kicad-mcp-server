@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+
 from ..server import mcp
 
 
@@ -39,7 +39,7 @@ SYMBOL_PINS = {
 }
 
 
-def get_pins_for_symbol(library_name: str, symbol_name: str) -> List[Tuple[int, str, str]]:
+def get_pins_for_symbol(library_name: str, symbol_name: str) -> list[tuple[int, str, str]]:
     """Get pin definitions for a symbol."""
     lib_id = f"{library_name}:{symbol_name}"
     if lib_id in SYMBOL_PINS:
@@ -72,7 +72,7 @@ async def add_component_from_library(
         # Get pins
         pins = get_pins_for_symbol(library_name, symbol_name)
         pin_entries = []
-        for pin_num, pin_type, pin_name in pins:
+        for pin_num, _pin_type, _pin_name in pins:
             pin_uuid = str(uuid.uuid4())
             pin_entries.append(f'    (pin "{pin_num}" (uuid {pin_uuid}))')
         pins_str = "\n".join(pin_entries) if pin_entries else ""
@@ -131,7 +131,7 @@ async def add_component_from_library(
 @mcp.tool()
 async def add_wire(
     file_path: str,
-    points: List[Tuple[float, float]],
+    points: list[tuple[float, float]],
 ) -> str:
     """Add a wire (connection line) to the schematic."""
     try:
@@ -141,7 +141,6 @@ async def add_wire(
 
         content = path.read_text()
         pts_str = " ".join([f"(xy {x} {y})" for x, y in points])
-        wire_uuid = str(uuid.uuid4())
         wire_entry = f'''  (wire (pts {pts_str})
   )'''
 
@@ -156,7 +155,7 @@ async def add_wire(
 
         path.write_text(content)
 
-        return f"✅ Wire added"
+        return "✅ Wire added"
     except Exception as e:
         import traceback
         return f"Error adding wire: {e}\n\n{traceback.format_exc()}"

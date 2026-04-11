@@ -1,8 +1,7 @@
 """PCB file parser using KiCad Python API (pcbnew)."""
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..utils.file_handlers import validate_kicad_file
 
@@ -70,7 +69,7 @@ class PCBParserKiCad:
             raise ImportError(
                 "pcbnew module not found. Please install KiCad or ensure it's in PATH.\n"
                 f"Error: {e}"
-            )
+            ) from e
 
         # Load the board
         self.board = pcbnew.LoadBoard(str(self.file_path))
@@ -105,7 +104,7 @@ class PCBParserKiCad:
                     value = fp.GetProperty(key)
                     if value:
                         properties[key] = value
-                except:
+                except Exception:
                     pass
 
             footprints.append(PCBFootprint(
@@ -170,7 +169,7 @@ class PCBParserKiCad:
 
         return tracks
 
-    def get_footprint_by_reference(self, reference: str) -> Optional[PCBFootprint]:
+    def get_footprint_by_reference(self, reference: str) -> PCBFootprint | None:
         """Get a footprint by its reference designator.
 
         Args:

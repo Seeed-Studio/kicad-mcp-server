@@ -5,9 +5,8 @@ and then successfully parsed back, ensuring the create → parse → verify loop
 """
 
 import asyncio
-import pytest
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, 'src')
 
@@ -16,8 +15,9 @@ async def test_component_round_trip_simple():
     """Test that a single component can be added and parsed."""
 
     from kicad_mcp_server.tools.core import create_kicad_project_impl
-    from kicad_mcp_server.tools import schematic_editor as se
+
     from kicad_mcp_server.parsers.schematic_parser import SchematicParser
+    from kicad_mcp_server.tools import schematic_editor as se
 
     print("=" * 70)
     print("🔄 Round-Trip Test: Single Component")
@@ -34,7 +34,7 @@ async def test_component_round_trip_simple():
     )
 
     assert "Project created" in create_result or "✅" in create_result
-    print(f"\n✅ Step 1: Project created")
+    print("\n✅ Step 1: Project created")
 
     # Step 2: Add a resistor
     schematic_path = Path(test_path) / f"{project_name}.kicad_sch"
@@ -58,7 +58,7 @@ async def test_component_round_trip_simple():
     parser = SchematicParser(str(schematic_path))
     components = parser.get_components()
 
-    print(f"\n✅ Step 3: Parsing schematic")
+    print("\n✅ Step 3: Parsing schematic")
     print(f"Components found: {len(components)}")
 
     # Verify component is found
@@ -74,7 +74,7 @@ async def test_component_round_trip_simple():
     assert r1 is not None, "R1 not found in parsed components"
     assert r1.value == "1k", f"Expected value '1k', got '{r1.value}'"
 
-    print(f"\n✅ Verification Results:")
+    print("\n✅ Verification Results:")
     print(f"  - Reference: {r1.reference}")
     print(f"  - Value: {r1.value}")
     print(f"  - Library: {r1.library_id}")
@@ -90,8 +90,9 @@ async def test_component_round_trip_multiple():
     """Test that multiple components can be added and parsed."""
 
     from kicad_mcp_server.tools.core import create_kicad_project_impl
-    from kicad_mcp_server.tools import schematic_editor as se
+
     from kicad_mcp_server.parsers.schematic_parser import SchematicParser
+    from kicad_mcp_server.tools import schematic_editor as se
 
     print("\n" + "=" * 70)
     print("🔄 Round-Trip Test: Multiple Components")
@@ -108,7 +109,7 @@ async def test_component_round_trip_multiple():
     )
 
     assert "Project created" in create_result or "✅" in create_result
-    print(f"\n✅ Step 1: Project created")
+    print("\n✅ Step 1: Project created")
 
     # Step 2: Add multiple components
     schematic_path = Path(test_path) / f"{project_name}.kicad_sch"
@@ -158,13 +159,13 @@ async def test_component_round_trip_multiple():
     parser = SchematicParser(str(schematic_path))
     components = parser.get_components()
 
-    print(f"\n✅ Step 3: Parsing schematic")
+    print("\n✅ Step 3: Parsing schematic")
     print(f"Components found: {len(components)}")
 
     assert len(components) >= len(components_to_add), \
         f"Expected at least {len(components_to_add)} components, got {len(components)}"
 
-    print(f"\n✅ Verification Results:")
+    print("\n✅ Verification Results:")
     for comp in components:
         print(f"  - {comp.reference}: {comp.value} ({comp.library_id})")
 
@@ -179,8 +180,9 @@ async def test_esp32s3_real_round_trip():
     """Test the actual ESP32S3 + OLED + LED + Button design."""
 
     from kicad_mcp_server.tools.core import create_kicad_project_impl
-    from kicad_mcp_server.tools import schematic_editor as se
+
     from kicad_mcp_server.parsers.schematic_parser import SchematicParser
+    from kicad_mcp_server.tools import schematic_editor as se
 
     print("\n" + "=" * 70)
     print("🔄 Round-Trip Test: ESP32S3 + OLED + LED + Button")
@@ -198,7 +200,7 @@ async def test_esp32s3_real_round_trip():
     )
 
     assert "Project created" in create_result or "✅" in create_result
-    print(f"\n✅ Step 1: Project created")
+    print("\n✅ Step 1: Project created")
 
     # Step 2: Add all components
     schematic_path = Path(test_path) / f"{project_name}.kicad_sch"
@@ -275,7 +277,7 @@ async def test_esp32s3_real_round_trip():
     parser = SchematicParser(str(schematic_path))
     components = parser.get_components()
 
-    print(f"\n✅ Step 3: Parsing schematic")
+    print("\n✅ Step 3: Parsing schematic")
     print(f"Components found: {len(components)}")
 
     assert len(components) >= len(components_to_add), \
@@ -294,7 +296,7 @@ async def test_esp32s3_real_round_trip():
         "SW1": "Button"
     }
 
-    print(f"\n✅ Verification Results:")
+    print("\n✅ Verification Results:")
     all_found = True
     for ref, expected_substring in expected.items():
         if ref in component_refs:
@@ -350,7 +352,7 @@ if __name__ == "__main__":
                 result = await test_func()
                 results[test_name] = result
                 print(f"\n✅ {test_name}: PASSED")
-            except Exception as e:
+            except Exception:
                 results[test_name] = False
                 print(f"\n❌ {test_name}: FAILED")
                 import traceback

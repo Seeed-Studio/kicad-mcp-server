@@ -8,7 +8,6 @@ These tests verify that the tools work correctly by:
 """
 
 import asyncio
-from pathlib import Path
 
 
 async def test_self_validate_simple_project():

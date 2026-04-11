@@ -1,9 +1,9 @@
 """PCB file parser wrapper using kicad-skip."""
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..utils.file_handlers import validate_kicad_file
 
@@ -82,7 +82,7 @@ class PCBParser:
             ValueError: If file is not a .kicad_pcb file
         """
         self.file_path = validate_kicad_file(file_path, ".kicad_pcb")
-        self._data: Optional[dict[str, Any]] = None
+        self._data: dict[str, Any] | None = None
 
     def _parse_file(self) -> dict[str, Any]:
         """Parse the PCB file.
@@ -121,7 +121,7 @@ class PCBParser:
         layer_pattern = r'\(layer\s+"([^"]+)"'
         layers = re.findall(layer_pattern, content)
         # Filter for copper layers
-        copper_layers = [l for l in layers if l.startswith(("F.", "B.", "In"))]
+        copper_layers = [layer for layer in layers if layer.startswith(("F.", "B.", "In"))]
         general["layers"] = len(set(copper_layers))
 
         return general

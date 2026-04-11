@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from ..server import mcp
 from ..parsers.schematic_parser import SchematicParser
+from ..server import mcp
 from ..tools.netlist import _find_root_schematic
 
 

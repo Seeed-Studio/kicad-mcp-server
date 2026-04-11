@@ -1,8 +1,9 @@
 """Hierarchical schematic analysis tools for KiCad MCP Server."""
 
-from ..server import mcp
-from ..parsers.schematic_parser import SchematicParser
 from pathlib import Path
+
+from ..parsers.schematic_parser import SchematicParser
+from ..server import mcp
 
 
 @mcp.tool()
@@ -42,11 +43,11 @@ async def trace_hierarchical_connection(
 
         lines = [
             f"# Connection Trace for {target_component.reference}",
-            f"",
+            "",
             f"**Component:** {target_component.reference}",
             f"**Value:** {target_component.value}",
             f"**File:** {file_path}",
-            f""
+            ""
         ]
 
         # Trace connections for specific pin or all pins
@@ -70,7 +71,7 @@ async def trace_hierarchical_connection(
                 lines.append(f"## Pin {pin_number} Connections")
                 for pin_net in pin_nets:
                     lines.append(f"**Net:** {pin_net['net']}")
-                    lines.append(f"**Connected to:**")
+                    lines.append("**Connected to:**")
                     for ref, pin in pin_net['connections']:
                         lines.append(f"  - {ref}:{pin}")
         else:
@@ -93,7 +94,7 @@ async def trace_hierarchical_connection(
             else:
                 lines.append(f"## All Pin Connections ({len(all_pin_nets)} pins)")
                 for pin_num in sorted(all_pin_nets.keys()):
-                    lines.append(f"")
+                    lines.append("")
                     lines.append(f"### Pin {pin_num}")
                     for pin_net in all_pin_nets[pin_num]:
                         lines.append(f"**Net:** {pin_net['net']}")
@@ -109,9 +110,9 @@ async def trace_hierarchical_connection(
         # Search in sub-sheets
         if sheets:
             lines.extend([
-                f"",
-                f"## Sub-Sheet Search",
-                f""
+                "",
+                "## Sub-Sheet Search",
+                ""
             ])
 
             project_dir = Path(file_path).parent
@@ -229,7 +230,7 @@ async def analyze_hierarchical_nets(
                                     'sub_nets': []
                                 }
 
-                    except Exception as e:
+                    except Exception:
                         # Skip sheets that can't be parsed
                         continue
 
@@ -238,15 +239,15 @@ async def analyze_hierarchical_nets(
 
         # Format results
         lines = [
-            f"# Hierarchical Net Analysis",
-            f"",
+            "# Hierarchical Net Analysis",
+            "",
             f"**File:** {file_path}",
             f"**Total nets:** {len(hierarchical_nets)}",
             f"**Filter:** {filter_pattern if filter_pattern else 'none'}",
             f"**Hierarchical sheets:** {len(sheets)}",
-            f"",
-            f"## Network Summary",
-            f""
+            "",
+            "## Network Summary",
+            ""
         ]
 
         # Group nets by type
