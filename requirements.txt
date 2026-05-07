@@ -1,5 +1,5 @@
 # Core dependencies for KiCad MCP Server
-mcp[cli]>=1.2.0
+mcp[cli]>=1.27.0
 fastmcp>=0.1.0
 kicad-skip>=0.2.5
 pydantic>=2.0.0
