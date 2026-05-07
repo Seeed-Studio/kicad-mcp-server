@@ -232,7 +232,7 @@ async def run_erc(
         # Parse ERC report
         if not erc_report_path.exists():
             # No violations found - check if report was generated
-            # KiCad 9.0 might use different format
+            # KiCad 9.0+ might use different format
             return f"""✅ **ERC Check Passed**
 
 **Schematic:** {schematic_path}

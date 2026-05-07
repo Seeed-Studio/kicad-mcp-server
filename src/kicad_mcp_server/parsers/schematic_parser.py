@@ -387,7 +387,7 @@ class SchematicParser:
         """Parse nets from schematic."""
         nets = {}
 
-        # KiCad 9.0 uses global_label, label, and wire to define nets
+        # KiCad 9.0+ uses global_label, label, and wire to define nets
         # Extract global labels
         global_label_pattern = r'\(global_label\s+"([^"]+)"[\s\S]*?\(at\s+([\d.]+)\s+([\d.]+)[^\)]*\)'
         for match in re.finditer(global_label_pattern, content):

@@ -306,7 +306,7 @@ Unable to extract pin information. This could be due to:
 **Next Steps:**
 1. Ensure schematic has components with pins
 2. Generate netlist first: `generate_netlist()`
-3. Verify schematic file is valid KiCad 9.0 format"""
+3. Verify schematic file is valid KiCad 9.0+ format"""
 
         # Format results
         result = f"""# Pin Function Analysis

@@ -60,7 +60,7 @@ class NetlistParser:
         tree = ET.parse(self.file_path)
         root = tree.getroot()
 
-        # Parse components (KiCad 9.0 uses <comp> not <component>)
+        # Parse components (KiCad 9.0+ uses <comp> not <component>)
         components = {}
         for comp in root.findall(".//comp"):
             ref = comp.get("ref")
