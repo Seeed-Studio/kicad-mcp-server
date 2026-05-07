@@ -1,6 +1,6 @@
 """Type definitions for KiCad MCP Server."""
 
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -9,11 +9,11 @@ class ComponentInfo(BaseModel):
 
     reference: str = Field(description="Component reference designator (e.g., R1, U1)")
     value: str = Field(description="Component value (e.g., 10k, ATmega328P)")
-    footprint: Optional[str] = Field(default=None, description="Assigned footprint")
+    footprint: str | None = Field(default=None, description="Assigned footprint")
     library_id: str = Field(description="Symbol library identifier")
     properties: dict[str, str] = Field(default_factory=dict, description="Additional properties")
     position: tuple[float, float] = Field(description="X, Y coordinates in schematic")
-    unit: Optional[int] = Field(default=None, description="Multi-unit part unit number")
+    unit: int | None = Field(default=None, description="Multi-unit part unit number")
 
 
 class NetInfo(BaseModel):

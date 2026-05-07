@@ -9,13 +9,10 @@ This module provides advanced pin analysis capabilities including:
 
 import re
 from pathlib import Path
-from typing import Optional
 
-from ..models.types import PinInfo
 from ..parsers.netlist_parser import NetlistParser
 from ..parsers.schematic_parser import SchematicParser
 from ..server import mcp
-
 
 # MCU family component patterns
 MCU_PATTERNS = {
@@ -83,7 +80,7 @@ NET_FUNCTION_PATTERNS = {
 }
 
 
-def _infer_pin_function_from_net(net_name: str) -> Optional[str]:
+def _infer_pin_function_from_net(net_name: str) -> str | None:
     """Infer pin function from net name pattern.
 
     Args:
@@ -106,7 +103,7 @@ def _infer_pin_function_from_net(net_name: str) -> Optional[str]:
     return None
 
 
-def _identify_mcu_family(component_value: str) -> Optional[str]:
+def _identify_mcu_family(component_value: str) -> str | None:
     """Identify MCU family from component value.
 
     Args:
@@ -150,9 +147,6 @@ def _get_mcu_pin_mapping(mcu_family: str, pin_name: str) -> dict:
     if mcu_family == "stm32":
         # STM32 pin naming convention: PXn (e.g., PA0, PB12)
         if re.match(r"P[A-Z][\d]+", pin_name, re.IGNORECASE):
-            port = pin_name[1:2].lower()
-            number = pin_name[2:]
-
             pin_mapping["function"] = "GPIO"
             pin_mapping["alternate_functions"] = [
                 "GPIO", "ADC", "TIM", "USART", "SPI", "I2C", "CAN"
@@ -240,7 +234,6 @@ async def analyze_pin_functions(
         for component in components:
             comp_ref = component["reference"]
             comp_value = component.get("value", "")
-            comp_library = component.get("library_id", "")
 
             # Check if this is an MCU
             mcu_family = _identify_mcu_family(comp_value)
@@ -291,11 +284,11 @@ async def analyze_pin_functions(
                                 "mcu_mapping": mcu_mapping,
                             })
 
-                        except Exception as e:
+                        except Exception:
                             # Continue with next pin if analysis fails
                             pass
 
-            except Exception as e:
+            except Exception:
                 # Continue with next component if symbol details fail
                 continue
 
@@ -612,7 +605,6 @@ async def extract_pinmux_config(
         for component in components:
             comp_ref = component["reference"]
             comp_value = component.get("value", "")
-            comp_library = component.get("library_id", "")
 
             # Check if this is an MCU
             mcu_family = _identify_mcu_family(comp_value)
@@ -626,7 +618,7 @@ async def extract_pinmux_config(
                     "reference": comp_ref,
                     "value": comp_value,
                     "mcu_family": mcu_family,
-                    "library": comp_library,
+                    "library": component.get("library_id", ""),
                 })
 
         if not mcu_components:
@@ -701,7 +693,7 @@ No MCU components were found in the schematic.
 
                             config["pins"].append(pin_config)
 
-            except Exception as e:
+            except Exception:
                 # Continue with next MCU if this one fails
                 pass
 

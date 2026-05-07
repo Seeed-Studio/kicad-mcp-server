@@ -1,12 +1,9 @@
 """KiCad netlist parser for accurate component network tracking."""
 
-import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
-
-from ..utils.file_handlers import validate_kicad_file
+from typing import Any
 
 
 @dataclass
@@ -16,7 +13,7 @@ class NetlistComponent:
     reference: str
     value: str
     library: str
-    footprint: Optional[str] = None
+    footprint: str | None = None
     pins: dict[str, str] = field(default_factory=dict)  # pin_number -> net_name
 
 
@@ -49,7 +46,7 @@ class NetlistParser:
         if self.file_path.suffix != ".xml":
             raise ValueError(f"Netlist file must be .xml, got: {self.file_path.suffix}")
 
-        self._data: Optional[dict[str, Any]] = None
+        self._data: dict[str, Any] | None = None
 
     def _parse_file(self) -> dict[str, Any]:
         """Parse the netlist XML file.
@@ -177,7 +174,7 @@ class NetlistParser:
 
         return nets[net_name].pins
 
-    def trace_connection(self, reference: str, pin_number: Optional[str] = None) -> dict[str, Any]:
+    def trace_connection(self, reference: str, pin_number: str | None = None) -> dict[str, Any]:
         """Trace connections from a component pin.
 
         Args:

@@ -2,7 +2,7 @@
 
 import uuid
 from pathlib import Path
-from typing import List, Tuple
+
 from ..server import mcp
 
 

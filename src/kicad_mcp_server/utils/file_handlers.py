@@ -1,7 +1,6 @@
 """File handling utilities."""
 
 from pathlib import Path
-from typing import Optional
 
 
 def validate_kicad_file(file_path: str, expected_extension: str) -> Path:
@@ -31,7 +30,7 @@ def validate_kicad_file(file_path: str, expected_extension: str) -> Path:
     return path
 
 
-def resolve_project_path(file_path: str, search_paths: Optional[list[str]] = None) -> Path:
+def resolve_project_path(file_path: str, search_paths: list[str] | None = None) -> Path:
     """Resolve a file path, optionally searching project directories.
 
     Args:

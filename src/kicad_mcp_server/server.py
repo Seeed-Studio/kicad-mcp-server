@@ -1,7 +1,6 @@
 """Main MCP server setup for KiCad integration."""
 
 from fastmcp import FastMCP
-from typing import Optional
 
 from .config import config
 
@@ -22,20 +21,21 @@ mcp = FastMCP(
 
 
 # Import and register tools
-from .tools import (
-    project,
-    schematic,
-    schematic_search,
-    schematic_editor,
+from .tools import (  # noqa: F401, E402
+    device_tree,
     hierarchical_analysis,
+    netlist,
     pcb,
     pcb_layout,
-    netlist,
-    validation,
     pin_analysis,
-    device_tree,
+    project,
+    schematic,
+    schematic_editor,
+    schematic_search,
     test_generation,
+    validation,
 )
+
 
 # Resources
 @mcp.resource("kicad://config")

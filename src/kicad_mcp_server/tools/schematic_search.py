@@ -1,7 +1,7 @@
 """Intelligent component search tools for KiCad MCP Server."""
 
-from ..server import mcp
 from ..parsers.schematic_parser import SchematicParser
+from ..server import mcp
 
 
 @mcp.tool()
@@ -24,7 +24,6 @@ async def search_components_by_type(
         Formatted list of matching components with their connections and details
     """
     try:
-        import os
         from pathlib import Path
 
         parser = SchematicParser(file_path)
@@ -81,13 +80,13 @@ async def search_components_by_type(
         # Format results
         lines = [
             f"# {component_type} Components Found",
-            f"",
+            "",
             f"**File:** {file_path}",
             f"**Total {component_type} components:** {len(matching_components)}",
             f"**Searched patterns:** {', '.join(patterns)}",
-            f"",
-            f"## Matching Components",
-            f""
+            "",
+            "## Matching Components",
+            ""
         ]
 
         for i, component in enumerate(matching_components, 1):
@@ -121,8 +120,8 @@ async def search_components_by_type(
             sheets = parser.get_sheets()
             if sheets:
                 lines.extend([
-                    f"## Sub-Sheet Search",
-                    f""
+                    "## Sub-Sheet Search",
+                    ""
                 ])
 
                 project_dir = Path(file_path).parent

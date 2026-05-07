@@ -4,12 +4,12 @@ Core KiCad operations - simplified and focused.
 """
 
 from . import (
+    netlist,
+    pcb,
+    pcb_layout,
     project,
     schematic,
     schematic_editor,
-    pcb,
-    pcb_layout,
-    netlist,
 )
 
 __all__ = [
