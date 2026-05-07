@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from ..server import mcp
+from ..utils.kicad_version import get_pcb_version
 
 
 @mcp.tool()
@@ -50,8 +51,11 @@ async def setup_pcb_layout(
         # Generate UUID
         pcb_uuid = str(uuid.uuid4())
 
+        # Get correct PCB version for installed KiCad
+        pcb_version = get_pcb_version()
+
         # Create basic PCB structure
-        pcb_content = f'''(kicad_pcb (version 20240130) (generator "kicad-mcp-server")
+        pcb_content = f'''(kicad_pcb (version {pcb_version}) (generator "kicad-mcp-server")
 
   (general
     (thickness 1.6)

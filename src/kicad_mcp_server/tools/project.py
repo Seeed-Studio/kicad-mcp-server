@@ -14,17 +14,28 @@ from ..server import mcp
 
 
 def _find_kicad_template() -> Path | None:
-    """Find KiCad template directory."""
-    possible_templates = [
-        Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport/template/Arduino_Mega"),
-        Path("/usr/share/kicad/template/Arduino_Mega"),
-        Path("C:/Program Files/KiCad/9.0/share/kicad/template/Arduino_Mega"),
-        Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport/template/EuroCard160mmX100mm"),
-    ]
+    """Find KiCad template directory, auto-detecting installed version."""
+    from ..utils.kicad_version import find_kicad_install
 
-    for template_path in possible_templates:
-        if template_path.exists():
-            return template_path
+    kicad = find_kicad_install()
+    if kicad:
+        install_path, _version = kicad
+        for template_name in ["Arduino_Mega", "EuroCard160mmX100mm"]:
+            p = install_path / "share" / "kicad" / "template" / template_name
+            if p.exists():
+                return p
+
+    # macOS fallback
+    mac_base = Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport/template")
+    for t in ["Arduino_Mega", "EuroCard160mmX100mm"]:
+        if (mac_base / t).exists():
+            return mac_base / t
+
+    # Linux fallback
+    for base in [Path("/usr/share/kicad/template"), Path("/usr/local/share/kicad/template")]:
+        for t in ["Arduino_Mega", "EuroCard160mmX100mm"]:
+            if (base / t).exists():
+                return base / t
 
     return None
 
