@@ -4,7 +4,6 @@ from pathlib import Path
 
 from ..parsers.schematic_parser import SchematicParser
 from ..server import mcp
-from ..tools.netlist import _find_root_schematic
 
 
 @mcp.tool()
@@ -209,6 +208,8 @@ async def list_schematic_nets(
             nets = [n for n in nets if any(kw in n.name.lower() for kw in power_keywords)]
 
         # Sub-sheet detection: unnamed nets can't be resolved without hierarchy
+        from .netlist import _find_root_schematic
+
         sch_path = Path(file_path)
         root_sch = _find_root_schematic(sch_path)
         subsheet_note = ""
