@@ -11,6 +11,7 @@ A Model Context Protocol (MCP) server for KiCad 9.0+ that lets AI assistants ana
 - **Pin Analysis** - Pin function detection, conflict analysis, pinmux config
 - **Code Generation** - Device tree (.dts) and hardware test code generation
 - **Project Management** - Create KiCad projects from templates
+- **Parts Registry** - Search 21,000+ verified parts on an open, no-login registry ([PartReel](https://partreel.com) by default, `PARTS_REGISTRY_URL` to change) and download footprints/symbols/3D into the project; downloads are host-allowlisted, extension-checked and size-capped
 
 ## Requirements
 

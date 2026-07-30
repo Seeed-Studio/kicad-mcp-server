@@ -7,6 +7,7 @@ from . import (
     device_tree,
     hierarchical_analysis,
     netlist,
+    parts_registry,
     pcb,
     pcb_layout,
     pin_analysis,
