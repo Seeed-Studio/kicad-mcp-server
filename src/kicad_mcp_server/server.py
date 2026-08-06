@@ -8,14 +8,15 @@ from .config import config
 mcp = FastMCP(
     name="kicad-mcp-server",
     instructions="""KiCad MCP Server - A server for analyzing KiCad schematics and PCBs,
-    generating test code, and performing design rule checks.
+    and performing design rule checks.
 
     Available capabilities:
     - Schematic analysis (components, nets, symbols)
     - PCB analysis (footprints, tracks, statistics)
     - Design rule checking (ERC/DRC)
     - Schematic summarization
-    - Test code generation for multiple frameworks
+    - Hierarchical sheet and net tracing
+    - Pin/power/bus extraction and device tree generation
     """,
 )
 
