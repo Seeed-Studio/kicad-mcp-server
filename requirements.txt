@@ -1,6 +1,12 @@
 # Core dependencies for KiCad MCP Server
-mcp[cli]>=1.27.0
-fastmcp>=0.1.0
+#
+# The upper bounds are load-bearing. Without them pip/uv resolve
+# fastmcp 2.14.1 + mcp 2.0.0, which install WITHOUT pydantic-settings, and
+# the server dies on import:
+#     ModuleNotFoundError: No module named 'pydantic_settings'
+# fastmcp 3.x is what actually provides the FastMCP API this server uses.
+mcp[cli]>=1.27,<2
+fastmcp>=3.2,<4
 kicad-skip>=0.2.5
 pydantic>=2.0.0
 python-dotenv>=1.0.0
