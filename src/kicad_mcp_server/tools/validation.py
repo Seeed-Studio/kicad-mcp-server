@@ -1,6 +1,7 @@
 """Design Rule Checking (DRC) and Electrical Rules Check (ERC) tools for KiCad MCP Server."""
 
 import json
+import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -44,26 +45,26 @@ def _parse_erc_report(report_path: Path) -> list[ERCError]:
 
     try:
         data = json.loads(content)
-        # JSON format (KiCad 9.0+)
-        for sheet in data.get("sheets", []):
-            for v in sheet.get("violations", []):
-                components = []
-                for item in v.get("items", []):
-                    desc = item.get("description", "")
-                    # Extract reference from description like "Symbol U1 pin 1 [...]"
-                    if "Symbol" in desc:
-                        parts = desc.split()
-                        if len(parts) >= 2:
-                            components.append(parts[1])
-
-                errors.append(
-                    ERCError(
-                        severity=v.get("severity", "error"),
-                        type=v.get("type", "unknown"),
-                        description=v.get("description", ""),
-                        components=components,
-                    )
+        # KiCad 9+ ERC JSON: violations are a top-level list (there is no
+        # "sheets" key — reading data["sheets"] silently returned []).
+        for v in data.get("violations", []):
+            components = []
+            for item in v.get("items", []):
+                desc = item.get("description", "")
+                # Description looks like "Pin U1 of ...": pull the reference.
+                # Don't gate on the literal English word "Symbol" — localized
+                # KiCad uses other words and the ref would be missed.
+                m = re.search(r"\b(?:Pin|Symbol)\s+([A-Za-z]+\d+)", desc)
+                if m:
+                    components.append(m.group(1))
+            errors.append(
+                ERCError(
+                    severity=v.get("severity", "error"),
+                    type=v.get("type", "unknown"),
+                    description=v.get("description", ""),
+                    components=components,
                 )
+            )
         return errors
     except (json.JSONDecodeError, KeyError):
         pass
@@ -117,24 +118,25 @@ def _parse_drc_report(report_path: Path) -> list[DRCError]:
 
     try:
         data = json.loads(content)
-        # JSON format (KiCad 9.0+)
-        for sheet in data.get("sheets", []):
-            for v in sheet.get("violations", []):
-                x, y = 0.0, 0.0
-                items = v.get("items", [])
-                if items:
-                    pos = items[0].get("pos", {})
-                    x = float(pos.get("x", 0))
-                    y = float(pos.get("y", 0))
+        # KiCad 9+ DRC JSON: violations are a top-level list (no "sheets" key —
+        # reading data["sheets"] returned [] and made run_drc report PASS with
+        # every violation silently dropped).
+        for v in data.get("violations", []):
+            x, y = 0.0, 0.0
+            items = v.get("items", [])
+            if items:
+                pos = items[0].get("pos", {})
+                x = float(pos.get("x", 0))
+                y = float(pos.get("y", 0))
 
-                errors.append(
-                    DRCError(
-                        severity=v.get("severity", "error"),
-                        type=v.get("type", "unknown"),
-                        description=v.get("description", ""),
-                        location=(x, y),
-                    )
+            errors.append(
+                DRCError(
+                    severity=v.get("severity", "error"),
+                    type=v.get("type", "unknown"),
+                    description=v.get("description", ""),
+                    location=(x, y),
                 )
+            )
         return errors
     except (json.JSONDecodeError, KeyError):
         pass
@@ -237,8 +239,11 @@ async def run_erc(
             )
             sch_path = root_sch
 
-        # ERC report output path
-        erc_report_path = _temp_dir() / (sch_path.stem + "_erc.rpt")
+        # ERC report output path. run_erc redirects sub-sheets to the root
+        # schematic, so the report is named after the ROOT stem — not the
+        # (possibly sub-sheet) input stem, which would never match.
+        root = _find_root_schematic(sch_path) or sch_path
+        erc_report_path = _temp_dir() / (root.stem + "_erc.rpt")
 
         # Run ERC using kicad-cli (KiCad 7+)
         cmd = [
@@ -282,19 +287,15 @@ async def run_erc(
 
         # Parse ERC report
         if not erc_report_path.exists():
-            # No violations found - check if report was generated
-            # KiCad 9.0+ might use different format
-            return f"""✅ **ERC Check Passed**
+            # kicad-cli returned success but produced no report — do NOT claim
+            # "all pins connected" (that was never verified).
+            return f"""⚠️ **ERC Report Not Generated**
 
 **Schematic:** {schematic_path}
 
-No electrical violations detected!{subsheet_note}
-
-**Checked:**
-- ✅ All pins properly connected
-- ✅ No power conflicts
-- ✅ No multiple outputs on same net
-- ✅ No pin type mismatches"""
+kicad-cli exited cleanly but wrote no report file, so no checks could be
+verified. Ensure KiCad 9+ is installed and the schematic has a matching
+.kicad_pro project file.{subsheet_note}"""
 
         # Parse and format results
         try:
@@ -360,11 +361,21 @@ ERC check completed but failed to parse report.
 
 You can manually inspect the report file or re-run ERC in KiCad GUI.{subsheet_note}"""
 
-    except FileNotFoundError:
+    except FileNotFoundError as e:
+        # Distinguish kicad-cli missing (raised by subprocess) from a missing
+        # schematic file (already checked at the top of the function).
+        if "kicad-cli" in str(e):
+            return f"""❌ **kicad-cli Not Found**
+
+**Schematic:** {schematic_path}
+
+KiCad's command-line tool (kicad-cli) is not installed or not on PATH.
+Install KiCad 7+ (https://www.kicad.org/) to run ERC."""
         return f"""❌ **File Not Found**
 
 **Schematic:** {schematic_path}
 
+{e}
 Please check the file path and try again."""
     except Exception as e:
         import traceback
@@ -580,8 +591,11 @@ async def get_erc_violations(
         if not sch_path.exists():
             return f"❌ **Schematic file not found:** {schematic_path}"
 
-        # ERC report output path
-        erc_report_path = _temp_dir() / (sch_path.stem + "_erc.rpt")
+        # ERC report output path. run_erc redirects sub-sheets to the root
+        # schematic, so the report is named after the ROOT stem — not the
+        # (possibly sub-sheet) input stem, which would never match.
+        root = _find_root_schematic(sch_path) or sch_path
+        erc_report_path = _temp_dir() / (root.stem + "_erc.rpt")
 
         if not erc_report_path.exists():
             # Run ERC first

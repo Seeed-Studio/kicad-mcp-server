@@ -118,7 +118,7 @@ async def download_registry_part(
     except RegistryError as exc:
         return f"❌ Registry lookup failed: {exc}"
 
-    files = part.get("files") or {}
+    files = (part.get("files") if isinstance(part, dict) else None) or {}
     saved, missing = [], []
     for fmt in formats:
         url = files.get(fmt)
@@ -130,7 +130,13 @@ async def download_registry_part(
                 client.download_asset, url, str(real), part_id, fmt
             )
             saved.append(path)
-        except RegistryError as exc:
+        except (RegistryError, OSError) as exc:
+            # OSError covers disk-full / permission-denied / Windows reserved
+            # names — surface the partial result instead of losing it.
             return f"❌ Download failed for {fmt}: {exc} (saved so far: {saved})"
-    out = {"saved": saved, "not_available": missing, "license": part.get("license")}
+    out = {
+        "saved": saved,
+        "not_available": missing,
+        "license": part.get("license") if isinstance(part, dict) else None,
+    }
     return json.dumps(out, indent=2)

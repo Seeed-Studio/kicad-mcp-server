@@ -120,9 +120,14 @@ class PCBParser:
         # Count layers
         layer_pattern = r'\(layer\s+"([^"]+)"'
         layers = re.findall(layer_pattern, content)
-        # Filter for copper layers
-        copper_layers = [layer for layer in layers if layer.startswith(("F.", "B.", "In"))]
-        general["layers"] = len(set(copper_layers))
+        # Filter for copper layers. A startswith("F."/"B.") check is wrong:
+        # F.SilkS / F.Paste / F.Mask / F.Fab / F.CrtYd / F.Adhes all start with
+        # "F." but are NOT copper. Only F.Cu, B.Cu and In<N>.Cu are copper.
+        copper_layers = [
+            layer for layer in set(layers)
+            if layer in ("F.Cu", "B.Cu") or re.match(r"In\d+\.Cu$", layer)
+        ]
+        general["layers"] = len(copper_layers) or 2
 
         return general
 
@@ -180,12 +185,15 @@ class PCBParser:
 
                     footprint_block = content[block_start:end_pos]
 
-                    # Extract reference from fp_text
-                    ref_match = re.search(r'\(fp_text\s+reference\s+"([^"]+)"', footprint_block)
+                    # Extract reference: KiCad 9+ uses (property "Reference" "..."),
+                    # KiCad 4/5 used (fp_text reference "..."). Support both.
+                    ref_match = (re.search(r'\(property\s+"Reference"\s+"([^"]+)"', footprint_block)
+                                 or re.search(r'\(fp_text\s+reference\s+"([^"]+)"', footprint_block))
                     reference = ref_match.group(1) if ref_match else ""
 
-                    # Extract value from fp_text
-                    val_match = re.search(r'\(fp_text\s+value\s+"([^"]+)"', footprint_block)
+                    # Extract value (same version split)
+                    val_match = (re.search(r'\(property\s+"Value"\s+"([^"]+)"', footprint_block)
+                                 or re.search(r'\(fp_text\s+value\s+"([^"]+)"', footprint_block))
                     value = val_match.group(1) if val_match else ""
 
                     # Extract layer (default to F.Cu if not found)

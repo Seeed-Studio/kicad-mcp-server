@@ -26,9 +26,23 @@ async def search_components_by_type(
     try:
         from pathlib import Path
 
+        from ..parsers.netlist_parser import NetlistParser
+        from .pin_analysis import _ensure_netlist
+
         parser = SchematicParser(file_path)
         components = parser.get_components()
-        nets = parser.get_nets()
+
+        # SchematicNet.pins is always empty, so build component -> nets from
+        # the netlist (the authoritative pin<->net map).
+        comp_nets: dict[str, set[str]] = {}
+        comp_pins_map: dict[str, list[tuple[str, str]]] = {}
+        netlist_path = await _ensure_netlist(Path(file_path))
+        if netlist_path:
+            nl = NetlistParser(str(netlist_path))
+            for ref, comp in nl.get_components().items():
+                pins = [(pn, nn) for pn, nn in comp.pins.items() if nn]
+                comp_pins_map[ref] = pins
+                comp_nets[ref] = {nn for _, nn in pins}
 
         # Smart component type detection patterns
         type_patterns = {
@@ -62,17 +76,10 @@ async def search_components_by_type(
                     matching_components.append(component)
                     continue
 
-            # Check network connections
-            if nets:
-                for net in nets:
-                    if any(pattern in net.name.lower() for pattern in patterns):
-                        # Check if this component is connected to this net
-                        for pin in net.pins:
-                            if pin.reference == component.reference:
-                                matching_components.append(component)
-                                break
-                        if component in matching_components:
-                            break
+            # Check network connections from the netlist
+            cnets = comp_nets.get(component.reference, set())
+            if any(any(pattern in n.lower() for n in cnets) for pattern in patterns):
+                matching_components.append(component)
 
         if not matching_components:
             return f"# No {component_type} components found\n\nSearched for patterns: {', '.join(patterns)}\n\nFound 0 matching components in {len(components)} total components."
@@ -95,21 +102,13 @@ async def search_components_by_type(
             if hasattr(component, 'footprint') and component.footprint:
                 lines.append(f"**Footprint:** {component.footprint}")
 
-            # Find network connections for this component
-            component_nets = []
-            if nets:
-                for net in nets:
-                    for pin in net.pins:
-                        if pin.reference == component.reference:
-                            component_nets.append({
-                                'net': net.name,
-                                'pin': pin.pin
-                            })
+            # List this component's nets from the netlist
+            component_nets = comp_pins_map.get(component.reference, [])
 
             if component_nets:
                 lines.append(f"**Connections ({len(component_nets)}):**")
-                for conn in component_nets[:10]:  # Show first 10 connections
-                    lines.append(f"  - Pin {conn['pin']}: {conn['net']}")
+                for pin_num, net_name in component_nets[:10]:  # Show first 10 connections
+                    lines.append(f"  - Pin {pin_num}: {net_name}")
                 if len(component_nets) > 10:
                     lines.append(f"  - ... and {len(component_nets) - 10} more connections")
 

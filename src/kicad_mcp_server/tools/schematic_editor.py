@@ -252,24 +252,35 @@ async def add_component_from_library(
         pin_entries = []
         for pin_num, _pin_type, _pin_name in pins:
             pin_uuid = str(uuid.uuid4())
-            pin_entries.append(f'    (pin "{pin_num}" (uuid {pin_uuid}))')
+            pin_entries.append(f'    (pin "{pin_num}" (uuid "{pin_uuid}"))')
         pins_str = "\n".join(pin_entries) if pin_entries else ""
 
         # --- Insert component instance ---
         component_entry = f'''  (symbol (lib_id "{lib_id}") (at {x} {y} 0) (unit {unit})
   (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)
-  (uuid {comp_uuid})
+  (uuid "{comp_uuid}")
   (property "Reference" "{reference}" (at {x} {y - 5} 0)
     (effects (font (size 1.27 1.27)))
+    (uuid "{uuid.uuid4()}")
   )
   (property "Value" "{value}" (at {x} {y + 2.54} 0)
     (effects (font (size 1.27 1.27)))
+    (uuid "{uuid.uuid4()}")
   )
   (property "Footprint" "{footprint}" (at {x} {y + 5.08} 0)
-    (effects (font (size 1.27 1.27)) hide)
+    (effects (font (size 1.27 1.27)) (hide yes))
+    (uuid "{uuid.uuid4()}")
   )
 {pins_str}
 )'''
+
+        # Refuse to write a symbol instance whose lib_id has no matching
+        # definition in (lib_symbols) — that yields a broken symbol in KiCad.
+        if not lib_inserted:
+            return (f"❌ Cannot add component: symbol definition for "
+                    f'"{lib_id}" is unavailable (library "{library_name}" not '
+                    f"found, or symbol not in it). Install the library or pick a "
+                    f"symbol that exists.")
 
         if content.rstrip().endswith(")"):
             content = content.rstrip()
@@ -282,7 +293,6 @@ async def add_component_from_library(
 
         path.write_text(content)
 
-        lib_status = "from library file" if lib_inserted else "hardcoded (library not found)"
         return f"""✅ Component added successfully!
 
 **File:** {file_path}
@@ -292,12 +302,9 @@ async def add_component_from_library(
 **Value:** {value}
 **Position:** ({x}, {y})
 **Lib ID:** {lib_id}
-**Symbol definition:** {lib_status}
+**Symbol definition:** inserted into lib_symbols
 **Pins:** {len(pins)} pins detected
 
-**Changes:**
-- ✅ Symbol definition inserted into lib_symbols
-- ✅ Pin definitions with UUIDs added
 """
 
     except Exception as e:
@@ -320,6 +327,8 @@ async def add_wire(
         content = path.read_text()
         pts_str = " ".join([f"(xy {x} {y})" for x, y in points])
         wire_entry = f"""  (wire (pts {pts_str})
+    (stroke (width 0) (type default))
+    (uuid "{uuid.uuid4()}")
   )"""
 
         if content.rstrip().endswith(")"):
@@ -358,7 +367,7 @@ async def add_label(
         label_uuid = str(uuid.uuid4())
         label_entry = f"""  (label "{text}" (at {x} {y} {orientation})
     (effects (font (size 1.27 1.27)) (justify left))
-    (uuid {label_uuid})
+    (uuid "{label_uuid}")
   )"""
 
         if content.rstrip().endswith(")"):
