@@ -1,10 +1,26 @@
 """PCB layout and routing tools."""
 
+import re
+import subprocess
 import uuid
 from pathlib import Path
 
 from ..server import mcp
 from ..utils.kicad_version import get_pcb_version
+
+
+_KICAD_CLI_MISSING_MSG = """⚠️ kicad-cli not found in PATH.
+
+Gerber export requires KiCad's command-line tools.
+
+Please:
+1. Install KiCad 7+ (https://www.kicad.org/)
+2. Ensure kicad-cli is in system PATH
+   (on Windows typically C:\\Program Files\\KiCad\\<ver>\\bin)
+
+**Manual export:**
+Open the board in KiCad's PCB editor → File → Fabrication Outputs → Gerbers.
+"""
 
 
 @mcp.tool()
@@ -14,47 +30,46 @@ async def setup_pcb_layout(
     height: float = 100.0,
     unit: str = "mm",
 ) -> str:
-    """Initialize PCB layout with specified dimensions.
+    """Initialize an empty PCB with the specified board outline dimensions.
 
-    Creates a .kicad_pcb file with the specified size based on the
-    schematic. The PCB will be initialized with:
-    - Specified dimensions
-    - Default grid settings
-    - Default layers
-    - Standard design rules
+    Writes a .kicad_pcb next to the schematic containing only the board
+    outline (Edge.Cuts), a standard 2-layer stack and default design rules —
+    no footprints, tracks or nets. KiCad stores .kicad_pcb coordinates in
+    millimetres (plain decimals), so dimensions are emitted directly in mm.
 
     Args:
-        schematic_path: Path to .kicad_sch file
-        width: PCB width in specified unit
-        height: PCB height in specified unit
-        unit: Unit for dimensions (mm or mil)
+        schematic_path: Path to the .kicad_sch the board is based on (used to
+            derive the .kicad_pcb path and board title).
+        width: Board width in the given unit.
+        height: Board height in the given unit.
+        unit: "mm" (default) or "mil".
 
     Returns:
-        Confirmation message with PCB file path
+        Confirmation reporting the actual outline size, layer count and
+        element counts read back from the written file.
     """
     try:
         sch_path = Path(schematic_path)
         if not sch_path.exists():
-            return f"Error: Schematic file not found: {schematic_path}"
+            return f"❌ Schematic file not found: {schematic_path}"
 
-        # Determine PCB path
         pcb_path = sch_path.with_suffix(".kicad_pcb")
 
-        # Convert to KiCad internal units (1 mm = 1e6 nm, 1 mil = 25400 nm)
-        if unit == "mm":
-            width_nm = int(width * 1e6)
-            height_nm = int(height * 1e6)
-        else:  # mil
-            width_nm = int(width * 25400)
-            height_nm = int(height * 25400)
+        # KiCad .kicad_pcb coordinates are millimetres (plain decimals), NOT
+        # nanometres — multiplying by 1e6 wrote ~100 km outlines (issue #17).
+        if unit == "mil":
+            w = width * 0.0254
+            h = height * 0.0254
+        else:
+            w = float(width)
+            h = float(height)
 
-        # Generate UUID
-        pcb_uuid = str(uuid.uuid4())
-
-        # Get correct PCB version for installed KiCad
         pcb_version = get_pcb_version()
 
-        # Create basic PCB structure
+        # KiCad 9 layer numbering (from the bundled template): copper layers
+        # use the modern odd-pair scheme (B.Cu = 2, not 31) and Edge.Cuts is
+        # layer 25 (not the KiCad-5 value 44). The old numbers made KiCad 9
+        # read the stack back as a single layer.
         pcb_content = f'''(kicad_pcb (version {pcb_version}) (generator "kicad-mcp-server")
 
   (general
@@ -66,31 +81,29 @@ async def setup_pcb_layout(
 
   (title_block
     (title "{sch_path.stem}")
-    (date "2025-01-25")
-    (ki_producers "KiCad MCP Server")
   )
 
   (layers
     (0 "F.Cu" signal)
-    (31 "B.Cu" signal)
-    (32 "B.Adhes" user "B.Adhesive")
-    (33 "F.Adhes" user "F.Adhesive")
-    (34 "B.Paste" user)
-    (35 "F.Paste" user)
-    (36 "B.SilkS" user "B.Silkscreen")
-    (37 "F.SilkS" user "F.Silkscreen")
-    (38 "B.Mask" user)
-    (39 "F.Mask" user)
-    (40 "Dwgs.User" user "User.Drawings")
-    (41 "Cmts.User" user "User.Comments")
-    (42 "Eco1.User" user "User.Eco1")
-    (43 "Eco2.User" user "User.Eco2")
-    (44 "Edge.Cuts" user)
-    (45 "Margin" user)
-    (46 "B.CrtYd" user "B.Courtyard")
-    (47 "F.CrtYd" user "F.Courtyard")
-    (48 "B.Fab" user)
-    (49 "F.Fab" user)
+    (2 "B.Cu" signal)
+    (9 "F.Adhes" user "F.Adhesive")
+    (11 "B.Adhes" user "B.Adhesive")
+    (13 "F.Paste" user)
+    (15 "B.Paste" user)
+    (5 "F.SilkS" user "F.Silkscreen")
+    (7 "B.SilkS" user "B.Silkscreen")
+    (1 "F.Mask" user)
+    (3 "B.Mask" user)
+    (17 "Dwgs.User" user "User.Drawings")
+    (19 "Cmts.User" user "User.Comments")
+    (21 "Eco1.User" user "User.Eco1")
+    (23 "Eco2.User" user "User.Eco2")
+    (25 "Edge.Cuts" user)
+    (27 "Margin" user)
+    (31 "F.CrtYd" user "F.Courtyard")
+    (29 "B.CrtYd" user "B.Courtyard")
+    (35 "F.Fab" user)
+    (33 "B.Fab" user)
   )
 
   (setup
@@ -132,75 +145,79 @@ async def setup_pcb_layout(
   )
 
   (net 0 "")
-  (net 1 "GND")
-  (net 2 "+3V3")
-  (net 3 "+5V")
 
-  (footprint "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" (layer "F.Cu")
-    (tstamp {pcb_uuid})
-    (at 0 0)
-    (descr "Through hole straight pin header, 1x06, 2.54mm pitch, single row")
-    (tags "Through hole pin header THT 1x06 2.54mm single row")
-    (property "Reference" "J1" (at 0 -2.33 0)
-      (effects (font (size 1 1) (thickness 0.15)))
-    )
-    (property "Value" "Conn_01x06" (at 0 14.97 0)
-      (effects (font (size 1 1) (thickness 0.15)))
-    )
-    (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 1))
-    (pad "2" thru_hole circle (at 2.54 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 2))
-    (pad "3" thru_hole circle (at 5.08 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 0))
-    (pad "4" thru_hole circle (at 7.62 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 0))
-    (pad "5" thru_hole circle (at 10.16 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 0))
-    (pad "6" thru_hole circle (at 12.7 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 0))
-  )
-
-  (gr_line (start {width_nm} 0) (end {width_nm} {height_nm})
-    (stroke (width 150000) (type default))
-    (layer "Edge.Cuts") (tstamp {uuid.uuid4()}))
-  (gr_line (start 0 {height_nm}) (end {width_nm} {height_nm})
-    (stroke (width 150000) (type default))
-    (layer "Edge.Cuts") (tstamp {uuid.uuid4()}))
-  (gr_line (start 0 0) (end 0 {height_nm})
-    (stroke (width 150000) (type default))
-    (layer "Edge.Cuts") (tstamp {uuid.uuid4()}))
-  (gr_line (start 0 0) (end {width_nm} 0)
-    (stroke (width 150000) (type default))
-    (layer "Edge.Cuts") (tstamp {uuid.uuid4()}))
-
-  (segment (start 0 0) (end {width_nm} 0)
-    (width 1000000) (layer "F.Cu") (net 0) (tstamp {uuid.uuid4()}))
+  (gr_line (start 0 0) (end {w} 0)
+    (stroke (width 0.15) (type default))
+    (layer "Edge.Cuts") (uuid "{uuid.uuid4()}"))
+  (gr_line (start {w} 0) (end {w} {h})
+    (stroke (width 0.15) (type default))
+    (layer "Edge.Cuts") (uuid "{uuid.uuid4()}"))
+  (gr_line (start {w} {h}) (end 0 {h})
+    (stroke (width 0.15) (type default))
+    (layer "Edge.Cuts") (uuid "{uuid.uuid4()}"))
+  (gr_line (start 0 {h}) (end 0 0)
+    (stroke (width 0.15) (type default))
+    (layer "Edge.Cuts") (uuid "{uuid.uuid4()}"))
 
 )
 '''
 
-        # Write PCB file
-        pcb_path.write_text(pcb_content)
+        pcb_path.write_text(pcb_content, encoding="utf-8")
 
-        return f"""✅ PCB layout initialized successfully!
+        # Report what is actually in the file, never features the write did
+        # not produce (issue #17).
+        report = _summarize_pcb(pcb_path)
+        return f"""✅ PCB layout initialized.
 
 **Schematic:** {schematic_path}
 **PCB File:** {pcb_path}
-**Dimensions:** {width} x {height} {unit}
-**Area:** {width * height:.1f} sq {unit}
 
-The PCB has been created with:
-- ✅ Edge cuts (board outline)
-- ✅ Standard layers (F.Cu, B.Cu, SilkS, Mask, etc.)
-- ✅ Default design rules
-- ✅ Power nets defined (GND, +3V3, +5V)
+{report}
 
 Next steps:
-1. Import components from schematic
-2. Place components
-3. Route connections
-4. Run DRC check
-5. Export Gerber files
+1. Import the netlist from the schematic (Update PCB from schematic)
+2. Place footprints and route connections
+3. Run DRC, then export Gerbers (export_gerber)
 """
 
     except Exception as e:
         import traceback
-        return f"Error setting up PCB layout: {e}\n\n{traceback.format_exc()}"
+        return f"❌ Error setting up PCB layout: {e}\n\n{traceback.format_exc()}"
+
+
+def _summarize_pcb(pcb_path: Path) -> str:
+    """Read a .kicad_pcb back and report its actual outline / layers / elements.
+
+    For a freshly-initialised board the only items carrying start/end coords
+    are the four Edge.Cuts gr_lines, so the min/max of those coords is the
+    exact board outline.
+    """
+    text = pcb_path.read_text(encoding="utf-8")
+
+    coords = [
+        (float(mx), float(my))
+        for mx, my in re.findall(
+            r"\((?:start|end)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\)", text
+        )
+    ]
+    if coords:
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        outline = f"{max(xs) - min(xs):.3f} × {max(ys) - min(ys):.3f} mm"
+    else:
+        outline = "(could not parse Edge.Cuts outline)"
+
+    layer_count = len(re.findall(r'^\s*\(\d+\s+"', text, re.MULTILINE))
+    n_footprints = len(re.findall(r'\(footprint\s+"', text))
+    n_segments = len(re.findall(r'\(segment\s', text))
+    n_nets = len(re.findall(r'\(net\s+\d+\s+"', text))
+
+    return (
+        f"**Dimensions (read back):** {outline}\n"
+        f"**Layers:** {layer_count}\n"
+        f"**Elements:** {n_footprints} footprint(s), "
+        f"{n_segments} track(s), {n_nets} net(s) declared"
+    )
 
 
 @mcp.tool()
@@ -208,114 +225,86 @@ async def export_gerber(
     pcb_path: str,
     output_dir: str = "",
 ) -> str:
-    """Export PCB to Gerber format for manufacturing.
+    """Export a PCB to Gerber + drill files for fabrication via kicad-cli.
 
-    Gerber files are required for PCB fabrication. This tool generates
-    all necessary Gerber files including:
-    - Copper layers (F.Cu, B.Cu)
-    - Solder mask layers
-    - Silkscreen layers
-    - Edge cuts (board outline)
-    - Drill files
+    Runs KiCad's command-line exporter against the .kicad_pcb and reports the
+    files actually produced. Requires KiCad 7+ installed with kicad-cli on PATH.
 
     Args:
-        pcb_path: Path to .kicad_pcb file
-        output_dir: Directory for Gerber output (default: same as PCB)
+        pcb_path: Path to the .kicad_pcb file.
+        output_dir: Directory for output (default: a "gerber" folder next to
+            the PCB).
 
     Returns:
-        Confirmation with Gerber file list
+        Confirmation listing the generated files, or an actionable error.
     """
     try:
         pcb = Path(pcb_path)
         if not pcb.exists():
-            return f"Error: PCB file not found: {pcb_path}"
+            return f"❌ PCB file not found: {pcb_path}"
 
-        # Determine output directory
-        if output_dir:
-            out_path = Path(output_dir)
-        else:
-            out_path = pcb.parent / "gerber"
-
+        out_path = Path(output_dir) if output_dir else pcb.parent / "gerber"
         out_path.mkdir(parents=True, exist_ok=True)
+        before = {p.name for p in out_path.iterdir()}
 
-        # List of Gerber files that would be generated
-        gerber_files = [
-            f"{pcb.stem}.GTp",  # Top copper
-            f"{pcb.stem}.GBp",  # Bottom copper
-            f"{pcb.stem}.GTO",  # Top silkscreen
-            f"{pcb.stem}.GBO",  # Bottom silkscreen
-            f"{pcb.stem}.GTS",  # Top soldermask
-            f"{pcb.stem}.GBS",  # Bottom soldermask
-            f"{pcb.stem}.GM1",  # Edge cuts
-            f"{pcb.stem}.TXT",  # Drill file
+        def _run(cmd: list[str]) -> tuple[int, str]:
+            r = subprocess.run(cmd, capture_output=True, timeout=180)
+            return r.returncode, (r.stderr or b"").decode("utf-8", "replace").strip()
+
+        # Gerbers first (required); drill is best-effort afterwards. Note the
+        # subcommand is "gerbers" (plural) and the output flag is "-o", not
+        # "--output-dir" — KiCad 7-10 all use this form. With no --layers it
+        # plots every layer defined in the board, so it generalises to N-layer.
+        gerber_cmd = [
+            "kicad-cli", "pcb", "export", "gerbers",
+            "-o", str(out_path), str(pcb),
         ]
+        try:
+            rc, err = _run(gerber_cmd)
+        except FileNotFoundError:
+            return _KICAD_CLI_MISSING_MSG
+        if rc != 0:
+            return (
+                f"❌ Gerber export failed (kicad-cli rc={rc}):\n\n"
+                f"{err or '(no stderr)'}"
+            )
 
-        # Create a placeholder Gerber info file
-        gerber_info = out_path / "gerber_info.txt"
-        gerber_info.write_text(f"""Gerber Export Information
-================================
+        drill_note = ""
+        drill_cmd = [
+            "kicad-cli", "pcb", "export", "drill",
+            "-o", str(out_path), str(pcb),
+        ]
+        try:
+            rc2, err2 = _run(drill_cmd)
+            if rc2 != 0:
+                drill_note = (
+                    f"\n\n⚠️ Drill export returned rc={rc2}: "
+                    f"{err2 or '(no stderr)'} (Gerbers still produced)"
+                )
+        except FileNotFoundError:
+            # kicad-cli was available for gerber, so this shouldn't happen —
+            # surface it rather than swallow.
+            drill_note = "\n\n⚠️ kicad-cli unavailable for drill export."
 
-PCB Source: {pcb_path}
-Output Directory: {out_path}
-Export Date: 2025-01-25
+        new_files = sorted({p.name for p in out_path.iterdir()} - before)
+        if not new_files:
+            return (
+                f"⚠️ kicad-cli reported success but produced no files in "
+                f"{out_path}.{drill_note}"
+            )
 
-Gerber Files:
-{chr(10).join([f'  - {f}' for f in gerber_files])}
-
-Manufacturer Notes:
-- Layer stack: 2 layers (Top, Bottom)
-- Board thickness: 1.6mm
-- Copper weight: 1 oz
-- Surface finish: HASL (default)
-- Solder mask: Green (default)
-- Silkscreen: White (default)
-
-For PCB fabrication, send all Gerber files to your manufacturer.
-Recommended manufacturers:
-- JLCPCB (https://jlcpcb.com)
-- PCBWay (https://www.pcbway.com)
-- OSH Park (https://oshpark.com)
-""")
-
-        return f"""✅ Gerber export information created!
+        listing = "\n".join(f"- {n}" for n in new_files)
+        return f"""✅ Gerber export complete.
 
 **PCB:** {pcb_path}
-**Output Directory:** {out_path}
+**Output directory:** {out_path}
 
-**Gerber Files:**
-{chr(10).join([f'  - {f}' for f in gerber_files])}
+**Files generated ({len(new_files)}):**
+{listing}{drill_note}
 
-**Next Steps:**
-
-To generate actual Gerber files, you need to use KiCad's PCB editor:
-
-```bash
-# Open PCB in KiCad
-kicad {pcb_path}
-
-# Or use pcbnew from command line
-pcbnew {pcb_path}
-
-# Then: File → Fabrication Outputs → Gerber
-```
-
-**Note:** Full Gerber generation requires KiCad's PCB editor.
-This tool creates the directory structure and documentation.
-
-**For Manufacturing:**
-1. Review PCB in KiCad PCB Editor
-2. Run DRC check (Tools → DRC)
-3. Export Gerber files
-4. Upload to manufacturer (JLCPCB, PCBWay, etc.)
-
-**Quick Test with JLCPCB:**
-- Website: https://jlcpcb.com
-- Upload: All .GTp, .GBp, .GTO, .GBO, .GTS, .GBS, .GM1 files
-- Drill file: .TXT
-- Quantity: 5-10 pieces for testing
-- Dimensions: As specified in PCB
+Send all of these to your fabricator (e.g. JLCPCB, PCBWay, OSH Park).
 """
 
     except Exception as e:
         import traceback
-        return f"Error exporting Gerber: {e}\n\n{traceback.format_exc()}"
+        return f"❌ Error exporting Gerber: {e}\n\n{traceback.format_exc()}"
