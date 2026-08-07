@@ -65,8 +65,12 @@ class NetlistParser:
         for comp in root.findall(".//comp"):
             ref = comp.get("ref")
             value = comp.findtext("value", "")
-            library = comp.findtext("libsource/libpart", "")
-            footprint = comp.findtext("footprint/libpart", "")
+            # KiCad XML: footprint is a direct <footprint>Lib:Footprint</footprint>
+            # element (NOT footprint/libpart), and libsource is an attribute-only
+            # element <libsource lib="..." part="..."/> (NOT libsource/libpart).
+            footprint = comp.findtext("footprint") or ""
+            libsource = comp.find("libsource")
+            library = libsource.get("lib", "") if libsource is not None else ""
 
             # Pins will be populated from nets later
             components[ref] = NetlistComponent(
@@ -80,7 +84,8 @@ class NetlistParser:
         # Parse nets and populate component pins
         nets = {}
         for net in root.findall(".//net"):
-            code = int(net.get("code"))
+            code_attr = net.get("code")
+            code = int(code_attr) if code_attr and code_attr.lstrip("-").isdigit() else -1
             name = net.get("name")
 
             pins_list = []
@@ -207,15 +212,21 @@ class NetlistParser:
             }
 
         else:
-            # Trace all pins
-            net_connections = {}
+            # Trace all pins. A component can have several pins on the same net
+            # (relay contacts, multiple GND pins), so group as a list per net
+            # instead of overwriting earlier pins.
+            net_connections: dict[str, list[dict[str, Any]]] = {}
             for pin_num, net_name in comp.pins.items():
                 nets = self.get_nets()
                 connected = nets[net_name].pins if net_name in nets else []
-                net_connections[net_name] = {
-                    "pin": pin_num,
-                    "connected_to": [(ref, pin) for ref, pin in connected if ref != reference],
-                }
+                net_connections.setdefault(net_name, []).append(
+                    {
+                        "pin": pin_num,
+                        "connected_to": [
+                            (ref, pin) for ref, pin in connected if ref != reference
+                        ],
+                    }
+                )
 
             return {
                 "component": reference,

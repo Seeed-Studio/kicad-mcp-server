@@ -2,8 +2,32 @@
 
 from pathlib import Path
 
+from ..parsers.netlist_parser import NetlistParser
 from ..parsers.schematic_parser import SchematicParser
 from ..server import mcp
+
+
+def _find_component_location(file_path: str, reference: str, sheets: list[dict]) -> tuple[object | None, str]:
+    """Find a component across the main sheet and sub-sheets.
+
+    Returns (component_or_None, sheet_name).
+    """
+    parser = SchematicParser(file_path)
+    for component in parser.get_components():
+        if component.reference == reference:
+            return component, "Main Schematic"
+
+    project_dir = Path(file_path).parent
+    for sheet in sheets:
+        sheet_path = project_dir / sheet.get("file", "")
+        if sheet_path.exists():
+            try:
+                for component in SchematicParser(str(sheet_path)).get_components():
+                    if component.reference == reference:
+                        return component, sheet.get("name", sheet.get("file", ""))
+            except Exception:
+                continue
+    return None, ""
 
 
 @mcp.tool()
@@ -26,133 +50,59 @@ async def trace_hierarchical_connection(
         Complete connection trace through hierarchy
     """
     try:
+        from .pin_analysis import _ensure_netlist
+
         parser = SchematicParser(file_path)
-        components = parser.get_components()
-        nets = parser.get_nets()
         sheets = parser.get_sheets()
 
-        # Find the target component
-        target_component = None
-        for component in components:
-            if component.reference == reference:
-                target_component = component
-                break
+        # Search the main sheet AND sub-sheets (previously only the root was
+        # searched, so any component placed in a sub-sheet was "Not Found").
+        target_component, location = _find_component_location(file_path, reference, sheets)
 
         if not target_component:
-            return f"# Component Not Found\n\nComponent '{reference}' not found in schematic.\n\nAvailable components: {', '.join([c.reference for c in components[:10]])}..."
+            refs = [c.reference for c in parser.get_components()][:10]
+            return f"# Component Not Found\n\nComponent '{reference}' not found in schematic hierarchy.\n\nAvailable components: {', '.join(refs)}..."
 
         lines = [
             f"# Connection Trace for {target_component.reference}",
             "",
             f"**Component:** {target_component.reference}",
             f"**Value:** {target_component.value}",
+            f"**Location:** {location}",
             f"**File:** {file_path}",
-            ""
+            "",
         ]
 
-        # Trace connections for specific pin or all pins
-        if pin_number:
-            # Trace specific pin
-            pin_nets = []
-            for net in nets:
-                for pin in net.pins:
-                    if pin.reference == reference and pin.pin == pin_number:
-                        pin_nets.append({
-                            'pin': pin.pin,
-                            'net': net.name,
-                            'connections': [(p.reference, p.pin) for p in net.pins if p.reference != reference]
-                        })
-                        break
+        # The authoritative pin<->net map lives in the netlist. SchematicParser
+        # nets carry no pin list (SchematicNet.pins is always empty), so tracing
+        # via them always reported "no connections".
+        netlist_path = await _ensure_netlist(Path(file_path))
+        if netlist_path is None:
+            lines.append("⚠️ No netlist available — cannot resolve connections. Run `generate_netlist()` first.")
+            return "\n".join(lines)
 
-            if not pin_nets:
-                lines.append(f"## Pin {pin_number} Not Found")
-                lines.append(f"No connections found for pin {pin_number} on component {reference}.")
+        nl = NetlistParser(str(netlist_path))
+        comp = nl.get_components().get(reference)
+        if not comp or not comp.pins:
+            lines.append("No connections found for this component.")
+            return "\n".join(lines)
+
+        pins_to_trace = [pin_number] if pin_number else list(comp.pins.keys())
+        for pn in pins_to_trace:
+            conn = nl.trace_connection(reference, str(pn))
+            net_name = conn.get("net") if isinstance(conn, dict) else None
+            connected = conn.get("connected_to", []) if isinstance(conn, dict) else []
+            lines.append(f"## Pin {pn}")
+            lines.append(f"**Net:** {net_name or '(unconnected)'}")
+            if connected:
+                lines.append(f"**Connected to ({len(connected)} pins):**")
+                for ref, p in connected[:15]:
+                    lines.append(f"  - {ref}:{p}")
+                if len(connected) > 15:
+                    lines.append(f"  - ... and {len(connected) - 15} more")
             else:
-                lines.append(f"## Pin {pin_number} Connections")
-                for pin_net in pin_nets:
-                    lines.append(f"**Net:** {pin_net['net']}")
-                    lines.append("**Connected to:**")
-                    for ref, pin in pin_net['connections']:
-                        lines.append(f"  - {ref}:{pin}")
-        else:
-            # Trace all pins
-            all_pin_nets = {}
-            for net in nets:
-                for pin in net.pins:
-                    if pin.reference == reference:
-                        if pin.pin not in all_pin_nets:
-                            all_pin_nets[pin.pin] = []
-
-                        all_pin_nets[pin.pin].append({
-                            'net': net.name,
-                            'connections': [(p.reference, p.pin) for p in net.pins if p.reference != reference]
-                        })
-
-            if not all_pin_nets:
-                lines.append("## No Connections Found")
-                lines.append(f"No network connections found for component {reference}.")
-            else:
-                lines.append(f"## All Pin Connections ({len(all_pin_nets)} pins)")
-                for pin_num in sorted(all_pin_nets.keys()):
-                    lines.append("")
-                    lines.append(f"### Pin {pin_num}")
-                    for pin_net in all_pin_nets[pin_num]:
-                        lines.append(f"**Net:** {pin_net['net']}")
-                        if pin_net['connections']:
-                            lines.append(f"**Connected to ({len(pin_net['connections'])} pins):**")
-                            for ref, pin in pin_net['connections'][:15]:
-                                lines.append(f"  - {ref}:{pin}")
-                            if len(pin_net['connections']) > 15:
-                                lines.append(f"  - ... and {len(pin_net['connections']) - 15} more")
-                        else:
-                            lines.append("**No external connections**")
-
-        # Search in sub-sheets
-        if sheets:
-            lines.extend([
-                "",
-                "## Sub-Sheet Search",
-                ""
-            ])
-
-            project_dir = Path(file_path).parent
-
-            for sheet in sheets:
-                sheet_path = project_dir / sheet['file']
-                if sheet_path.exists():
-                    try:
-                        sheet_parser = SchematicParser(str(sheet_path))
-                        sheet_components = sheet_parser.get_components()
-                        sheet_nets = sheet_parser.get_nets()
-
-                        # Search for component in subsheet
-                        sheet_target = None
-                        for component in sheet_components:
-                            if component.reference == reference:
-                                sheet_target = component
-                                break
-
-                        if sheet_target:
-                            lines.append(f"### Found in {sheet['name']}")
-                            lines.append(f"**Value:** {sheet_target.value}")
-                            lines.append(f"**Location:** {sheet['file']}")
-
-                            # Find connections in subsheet
-                            if pin_number:
-                                for net in sheet_nets:
-                                    for pin in net.pins:
-                                        if pin.reference == reference and pin.pin == pin_number:
-                                            lines.append(f"**Pin {pin_number} Net:** {net.name}")
-                                            connections = [(p.reference, p.pin) for p in net.pins if p.reference != reference]
-                                            if connections:
-                                                lines.append("**Connections:**")
-                                                for ref, pin in connections[:10]:
-                                                    lines.append(f"  - {ref}:{pin}")
-                                            break
-
-                    except Exception as e:
-                        lines.append(f"### {sheet['name']}")
-                        lines.append(f"Error analyzing sheet: {e}")
+                lines.append("**No external connections**")
+            lines.append("")
 
         return "\n".join(lines)
 
@@ -182,62 +132,39 @@ async def analyze_hierarchical_nets(
         Complete hierarchical net analysis
     """
     try:
+        import re
+
+        from .pin_analysis import _ensure_netlist
+
         parser = SchematicParser(file_path)
-        nets = parser.get_nets()
         sheets = parser.get_sheets()
 
-        # Collect all nets from hierarchy
+        netlist_path = await _ensure_netlist(Path(file_path))
+        if netlist_path is None:
+            return "# No Netlist Available\n\nCannot analyze nets without a netlist. Run `generate_netlist()` first."
+
+        nl = NetlistParser(str(netlist_path))
+
+        # docstring promises a regex; honour it (was a plain substring check).
+        try:
+            flt = re.compile(filter_pattern, re.IGNORECASE) if filter_pattern else None
+        except re.error:
+            flt = None
+
+        # NetlistNet.pins is a list[(ref, pin)] that is actually populated,
+        # unlike SchematicNet.pins which is always empty.
         hierarchical_nets = {}
-
-        # Add main schematic nets
-        for net in nets:
-            net_name = net.name
-            if filter_pattern and filter_pattern not in net_name:
+        for name, net in nl.get_nets().items():
+            if flt and not flt.search(name):
                 continue
-
-            hierarchical_nets[net_name] = {
-                'location': 'Main Schematic',
-                'pins': list(net.pins),
-                'sub_nets': []
+            hierarchical_nets[name] = {
+                "location": "Netlist (whole board)",
+                "pins": net.pins,
             }
-
-        # Add sub-sheet nets
-        if sheets:
-            project_dir = Path(file_path).parent
-
-            for sheet in sheets:
-                sheet_path = project_dir / sheet['file']
-                if sheet_path.exists():
-                    try:
-                        sheet_parser = SchematicParser(str(sheet_path))
-                        sheet_nets = sheet_parser.get_nets()
-
-                        for net in sheet_nets:
-                            net_name = net.name
-                            if filter_pattern and filter_pattern not in net_name:
-                                continue
-
-                            # Check if this net already exists in main schematic
-                            if net_name in hierarchical_nets:
-                                hierarchical_nets[net_name]['sub_nets'].append({
-                                    'location': sheet['name'],
-                                    'pins': list(net.pins)
-                                })
-                            else:
-                                hierarchical_nets[net_name] = {
-                                    'location': sheet['name'],
-                                    'pins': list(net.pins),
-                                    'sub_nets': []
-                                }
-
-                    except Exception:
-                        # Skip sheets that can't be parsed
-                        continue
 
         if not hierarchical_nets:
             return f"# No Nets Found\n\nNo nets found matching pattern: {filter_pattern if filter_pattern else 'all'}"
 
-        # Format results
         lines = [
             "# Hierarchical Net Analysis",
             "",
@@ -247,55 +174,34 @@ async def analyze_hierarchical_nets(
             f"**Hierarchical sheets:** {len(sheets)}",
             "",
             "## Network Summary",
-            ""
+            "",
         ]
 
-        # Group nets by type
-        power_nets = []
-        signal_nets = []
-        interface_nets = []
-
+        power_nets, signal_nets, interface_nets = [], [], []
         for net_name, net_info in hierarchical_nets.items():
-            net_upper = net_name.upper()
-            if any(p in net_upper for p in ['VDD', 'VSS', 'GND', 'VCC', 'VBAT', 'VPP', '+3V', '+5V']):
+            up = net_name.upper()
+            if any(p in up for p in ["VDD", "VSS", "GND", "VCC", "VBAT", "VPP", "+3V", "+5V"]):
                 power_nets.append((net_name, net_info))
-            elif any(i in net_upper for i in ['I2C', 'SPI', 'UART', 'SDA', 'SCL', 'MOSI', 'MISO', 'TX', 'RX']):
+            elif any(i in up for i in ["I2C", "SPI", "UART", "SDA", "SCL", "MOSI", "MISO", "TX", "RX"]):
                 interface_nets.append((net_name, net_info))
             else:
                 signal_nets.append((net_name, net_info))
 
-        # Display power nets
-        if power_nets:
-            lines.append("### Power Nets")
-            for net_name, net_info in sorted(power_nets)[:20]:
+        def _emit(title: str, group: list, limit: int) -> None:
+            if not group:
+                return
+            lines.append(f"### {title}")
+            for net_name, net_info in sorted(group)[:limit]:
                 lines.append(f"**{net_name}** ({net_info['location']})")
                 lines.append(f"  Connections: {len(net_info['pins'])} pins")
-                if show_hierarchy and net_info['sub_nets']:
-                    lines.append(f"  Sub-sheets: {len(net_info['sub_nets'])}")
                 lines.append("")
+            if len(group) > limit:
+                lines.append(f"*... and {len(group) - limit} more*")
+            lines.append("")
 
-        # Display interface nets
-        if interface_nets:
-            lines.append("### Interface Nets")
-            for net_name, net_info in sorted(interface_nets)[:30]:
-                lines.append(f"**{net_name}** ({net_info['location']})")
-                lines.append(f"  Connections: {len(net_info['pins'])} pins")
-                if show_hierarchy and net_info['sub_nets']:
-                    lines.append(f"  Sub-sheets: {len(net_info['sub_nets'])}")
-                lines.append("")
-
-        # Display signal nets (limited)
-        if signal_nets:
-            lines.append(f"### Signal Nets (showing first 20 of {len(signal_nets)})")
-            for net_name, net_info in sorted(signal_nets)[:20]:
-                lines.append(f"**{net_name}** ({net_info['location']})")
-                lines.append(f"  Connections: {len(net_info['pins'])} pins")
-                if show_hierarchy and net_info['sub_nets']:
-                    lines.append(f"  Sub-sheets: {len(net_info['sub_nets'])}")
-                lines.append("")
-
-            if len(signal_nets) > 20:
-                lines.append(f"*... and {len(signal_nets) - 20} more signal nets*")
+        _emit("Power Nets", power_nets, 20)
+        _emit("Interface Nets", interface_nets, 30)
+        _emit(f"Signal Nets (showing first 20 of {len(signal_nets)})", signal_nets, 20)
 
         return "\n".join(lines)
 

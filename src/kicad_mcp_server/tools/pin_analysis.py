@@ -62,65 +62,68 @@ async def _ensure_netlist(sch_path: Path) -> Path | None:
 
 # MCU family component patterns
 MCU_PATTERNS = {
-    "stm32": r"STM32[FHL][\d][A-Za-z0-9]+",
-    "esp32": r"ESP32(?:-[A-Za-z0-9]+)?|ESP32-[A-Za-z0-9]+",
-    "nrf52": r"nRF52[\d A-Za-z0-9]*|nRF528[\d]+",
-    "atmega": r"ATmega[\d]+[A-Za-z]*",
-    "samd": r"ATSAMD[\d]+[A-Za-z]*",
+    "stm32": r"STM32[FHL]\d[A-Za-z0-9]*",
+    "esp32": r"ESP32(?:-[A-Za-z0-9]+)?",
+    "nrf52": r"nRF5[2-9][\d A-Za-z0-9]*",  # nRF52/nRF53/nRF54 (e.g. nRF54LM20B)
+    "atmega": r"ATmega\d+[A-Za-z]*",
+    "samd": r"ATSAMD\d+[A-Za-z]*",
     "rp2040": r"RP2040",
 }
 
 
-# Pin function inference patterns based on net names
+# Pin function inference patterns based on net names.
+# IMPORTANT: use alternation groups (SDA|SCL), NOT character classes [SDA|SCL] —
+# a character class matches any single char in the set {S,D,A,|,C,L} and would
+# match almost every net name, producing nonsense matches.
 NET_FUNCTION_PATTERNS = {
     "I2C": [
-        r"I2C[_\d]*[SDA|SCL]",
-        r"SDA[\d]*",
-        r"SCL[\d]*",
-        r"TWI[_\d]*[SDA|SCL]",
+        r"I2C[_\d]*(?:SDA|SCL)",
+        r"SDA\d*",
+        r"SCL\d*",
+        r"TWI[_\d]*(?:SDA|SCL)",
     ],
     "SPI": [
-        r"SPI[_\d]*[MISO|MOSI|SCK|CS]",
-        r"MISO[\d]*",
-        r"MOSI[\d]*",
-        r"SCK[\d]*",
-        r"CS[\d]*",
-        r"NSS[\d]*",
+        r"SPI[_\d]*(?:MISO|MOSI|SCK|CS)",
+        r"MISO\d*",
+        r"MOSI\d*",
+        r"SCK\d*",
+        r"CS\d*",
+        r"NSS\d*",
     ],
     "UART": [
-        r"UART[_\d]*[TX|RX|CTS|RTS]",
-        r"USART[_\d]*[TX|RX|CTS|RTS]",
-        r"TX[\d]*",
-        r"RX[\d]*",
-        r"Serial[_\d]*",
+        r"UART[_\d]*(?:TX|RX|CTS|RTS)",
+        r"USART[_\d]*(?:TX|RX|CTS|RTS)",
+        r"TX\d*",
+        r"RX\d*",
+        r"Serial\d*",
     ],
     "GPIO": [
         r"GPIO[_\d]+",
         r"IO[_\d]+",
-        r"PA[\d]+",
-        r"PB[\d]+",
-        r"PC[\d]+",
+        r"PA\d+",
+        r"PB\d+",
+        r"PC\d+",
         r"P\d+",
     ],
     "ADC": [
         r"ADC[_\d]+",
-        r"AIN[\d]+",
-        r"AN[\d]+",
+        r"AIN\d+",
+        r"AN\d+",
     ],
     "PWM": [
         r"PWM[_\d]+",
-        r"TIM[_\d]*[CH]*[\d]+",
+        r"TIM[_\d]*CH*\d+",
     ],
     "USB": [
-        r"USB[_\d]*[DM|DP|D-|D+]",
+        r"USB[_\d]*(?:DM|DP|D-|D\+)",
         r"UDM",
         r"UDP",
         r"D-",
-        r"D+",
+        r"D\+",
     ],
     "INTERRUPT": [
-        r"INT[\d]*",
-        r"IRQ[\d]*",
+        r"INT\d*",
+        r"IRQ\d*",
         r".*_INT",
     ],
 }
@@ -268,69 +271,54 @@ async def analyze_pin_functions(
             # Analyze all components
             components = list(schematic_parser.get_components())
 
-        # Analyze pin functions
+        # Analyze pin functions.
+        # The authoritative pin->net map comes from the netlist; pin name/type
+        # are enriched from the schematic's lib_symbols via SchematicComponent.pins.
+        # (Previously this relied on _extract_pin_info_from_symbol_details whose
+        # only parse branch was `pass`, so the tool always returned empty.)
+        sch_components = {c.reference: c for c in schematic_parser.get_components()}
+        nl_components = netlist_parser.get_components()
         pin_analysis = []
 
         for component in components:
             comp_ref = component.reference
             comp_value = component.value
-
-            # Check if this is an MCU
             mcu_family = _identify_mcu_family(comp_value)
 
-            # Get symbol details to extract pins
-            try:
-                from .schematic import get_symbol_details
+            nl_comp = nl_components.get(comp_ref)
+            pin_map = nl_comp.pins if nl_comp else {}  # pin_number -> net_name
+            if not pin_map:
+                continue  # not in netlist / nothing connected
 
-                symbol_details_result = await get_symbol_details(str(sch_path), comp_ref)
+            # pin number -> (name, electrical_type) from schematic lib_symbols
+            pin_meta: dict[str, tuple[str, str]] = {}
+            sch_comp = sch_components.get(comp_ref)
+            if sch_comp:
+                for p in sch_comp.pins:
+                    pin_meta[str(p.get("number", ""))] = (
+                        p.get("name", ""),
+                        p.get("electrical_type", ""),
+                    )
 
-                if "❌" not in symbol_details_result:
-                    # Parse symbol details to extract pin information
-                    # This would need proper parsing of the formatted output
-                    # For now, we'll extract basic info
-                    pin_info = _extract_pin_info_from_symbol_details(symbol_details_result)
+            for pin_num, net_name in pin_map.items():
+                pin_name, pin_type = pin_meta.get(str(pin_num), (str(pin_num), ""))
 
-                    for pin in pin_info:
-                        pin_number = pin.get("number", "")
-                        pin_name = pin.get("name", "")
-                        pin_type = pin.get("type", "")
+                func = _infer_pin_function_from_net(net_name)
+                inferred_functions = [func] if func else []
 
-                        # Get net connections from netlist
-                        try:
-                            connections = netlist_parser.trace_connection(comp_ref, pin_number)
-                            net_names = [conn.get("net", "") for conn in connections if conn.get("net")]
+                mcu_mapping = _get_mcu_pin_mapping(mcu_family, pin_name) if mcu_family else None
 
-                            # Infer pin function from net names
-                            inferred_functions = []
-                            for net_name in net_names:
-                                func = _infer_pin_function_from_net(net_name)
-                                if func and func not in inferred_functions:
-                                    inferred_functions.append(func)
-
-                            # Get MCU-specific mapping if available
-                            mcu_mapping = None
-                            if mcu_family:
-                                mcu_mapping = _get_mcu_pin_mapping(mcu_family, pin_name)
-
-                            pin_analysis.append({
-                                "component": comp_ref,
-                                "component_value": comp_value,
-                                "mcu_family": mcu_family,
-                                "pin_number": pin_number,
-                                "pin_name": pin_name,
-                                "pin_type": pin_type,
-                                "net_names": net_names,
-                                "inferred_functions": inferred_functions,
-                                "mcu_mapping": mcu_mapping,
-                            })
-
-                        except Exception:
-                            # Continue with next pin if analysis fails
-                            pass
-
-            except Exception:
-                # Continue with next component if symbol details fail
-                continue
+                pin_analysis.append({
+                    "component": comp_ref,
+                    "component_value": comp_value,
+                    "mcu_family": mcu_family,
+                    "pin_number": str(pin_num),
+                    "pin_name": pin_name or str(pin_num),
+                    "pin_type": pin_type,
+                    "net_names": [net_name] if net_name else [],
+                    "inferred_functions": inferred_functions,
+                    "mcu_mapping": mcu_mapping,
+                })
 
         if not pin_analysis:
             return f"""⚠️ **No Pin Analysis Available**
@@ -418,17 +406,26 @@ def _extract_pin_info_from_symbol_details(details_text: str) -> list[dict]:
     """
     pins = []
 
-    # Parse the formatted output to extract pin information
-    # This is a simplified implementation - would need proper parsing
+    # Parse the get_symbol_details markdown table, e.g.:
+    #   | Pin | Name | Type |
+    #   | --- | ---- | ---- |
+    #   | 1 | VDD | power_in |
     lines = details_text.split("\n")
 
     for line in lines:
-        if "|" in line:  # Table format
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) >= 3:
-                # Try to extract pin info from table cells
-                # This is a basic implementation
-                pass
+        if "|" not in line:
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        cells = [c for c in cells if c != ""]  # drop empty edge cells
+        if len(cells) < 3:
+            continue
+        first = cells[0].lower()
+        # skip header / separator rows
+        if first in ("pin", "number", "#", "no.", "ref"):
+            continue
+        if set(cells[0]) <= set("-:="):
+            continue
+        pins.append({"number": cells[0], "name": cells[1], "type": cells[2]})
 
     return pins
 
@@ -461,50 +458,44 @@ async def detect_pin_conflicts(
         if netlist_path is None:
             return "❌ **Failed to generate netlist for conflict detection**"
 
-        # Parse netlist
+        # Parse netlist + schematic. The netlist carries pin->net but NOT pin
+        # electrical type; that comes from the schematic's lib_symbols.
         netlist_parser = NetlistParser(str(netlist_path))
+        schematic_parser = SchematicParser(str(sch_path))
+
+        OUTPUT_TYPES = {"output", "power_out", "open_collector", "open_emitter", "tri_state"}
+
+        # (ref, pin_number) -> electrical_type
+        pin_type_of: dict[tuple[str, str], str] = {}
+        for c in schematic_parser.get_components():
+            for p in c.pins:
+                pin_type_of[(c.reference, str(p.get("number", "")))] = (
+                    p.get("electrical_type", "").lower()
+                )
 
         # Detect conflicts
         conflicts = []
 
-        # Check for multiple outputs on same net
+        # Check for multiple output/driver pins on the same net.
+        # (Multiple power_in pins on a rail like +3V3 are normal and are NOT
+        # reported — only multiple drivers are a conflict.)
         all_nets = netlist_parser.get_nets()
 
         for net_name, net in all_nets.items():
             connections = net.pins  # list of (ref, pin_number)
 
-            # Count pin connections
             output_pins = []
-            input_pins = []
-            power_pins = []
-
             for ref, pin_num in connections:
-                # KiCad netlist doesn't carry pin type; mark as unknown
-                pin_type = "unknown"
-
-                if pin_type == "output":
+                pin_type = pin_type_of.get((ref, str(pin_num)), "")
+                if pin_type in OUTPUT_TYPES:
                     output_pins.append(f"{ref}:{pin_num}")
-                elif pin_type == "input":
-                    input_pins.append(f"{ref}:{pin_num}")
-                elif pin_type in ["power_in", "power_out", "power"]:
-                    power_pins.append(f"{ref}:{pin_num}")
 
-            # Check for multiple outputs
             if len(output_pins) > 1:
                 conflicts.append({
                     "type": "multiple_outputs",
                     "severity": "error",
                     "net": net_name,
-                    "description": f"Multiple outputs on same net: {', '.join(output_pins)}",
-                })
-
-            # Check for power-to-power connections
-            if len(power_pins) > 1:
-                conflicts.append({
-                    "type": "power_conflict",
-                    "severity": "warning",
-                    "net": net_name,
-                    "description": f"Multiple power pins on same net: {', '.join(power_pins)}",
+                    "description": f"Multiple output/driver pins on same net: {', '.join(output_pins)}",
                 })
 
         # Check for single-pin nets (potential unconnected)
@@ -539,10 +530,9 @@ async def detect_pin_conflicts(
 The schematic has been analyzed and no pin conflicts were found.
 
 **Checked:**
-- ✅ No multiple outputs on same net
-- ✅ No power-to-power connections
-- ✅ No unconnected input pins
-- ✅ No pin type mismatches"""
+- ✅ No multiple output/driver pins on the same net
+- ✅ No single-pin (potentially unconnected) nets
+- ✅ No unconnected pins"""
 
         # Format conflicts
         result = f"""❌ **Pin Conflicts Detected**
@@ -667,11 +657,14 @@ No MCU components were found in the schematic.
 2. Check component values match supported patterns
 3. Try without component_type filter"""
 
+        # pin number -> name from schematic lib_symbols
+        sch_components = {c.reference: c for c in schematic_parser.get_components()}
+
         # Extract pinmux configuration for each MCU
         pinmux_configs = []
 
         for mcu in mcu_components:
-            mcu_ref = mcu.reference
+            mcu_ref = mcu["reference"]
             mcu_family = mcu["mcu_family"]
 
             config = {
@@ -681,27 +674,26 @@ No MCU components were found in the schematic.
                 "pins": [],
             }
 
-            # Get pin connections from netlist
-            try:
-                # Get all pins for this component
-                comp = netlist_parser.get_components().get(mcu_ref)
+            pin_names: dict[str, str] = {}
+            sch_c = sch_components.get(mcu_ref)
+            if sch_c:
+                for p in sch_c.pins:
+                    pin_names[str(p.get("number", ""))] = p.get("name", "")
 
-                if comp:
-                    for pin_num, net_name in comp.pins.items():
-                        # Infer peripheral function from net name
-                        peripheral = _infer_pin_function_from_net(net_name)
-
-                        pin_config = {
-                            "pin_number": pin_num,
-                            "net": net_name,
-                            "peripheral": peripheral,
-                        }
-
-                        config["pins"].append(pin_config)
-
-            except Exception:
-                # Continue with next MCU if this one fails
-                pass
+            comp = netlist_parser.get_components().get(mcu_ref)
+            if comp:
+                for pin_num, net_name in comp.pins.items():
+                    peripheral = _infer_pin_function_from_net(net_name)
+                    pin_name = pin_names.get(str(pin_num), str(pin_num))
+                    mcu_mapping = _get_mcu_pin_mapping(mcu_family, pin_name)
+                    pin_config = {
+                        "pin_number": str(pin_num),
+                        "pin_name": pin_name,
+                        "net": net_name,
+                        "peripheral": peripheral,
+                        "alternate_functions": (mcu_mapping or {}).get("alternate_functions", []),
+                    }
+                    config["pins"].append(pin_config)
 
             pinmux_configs.append(config)
 

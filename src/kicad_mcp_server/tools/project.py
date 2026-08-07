@@ -129,39 +129,41 @@ After installation, this tool will use KiCad's template to create projects.
             new_uuid = str(uuid.uuid4())
             content = re.sub(r'\(uuid "([^"]*)"\)', f'(uuid "{new_uuid}")', content, count=1)
 
-            # Update title block
-            content = re.sub(r'\(title "([^"]*)"\)', f'(title "{title_text}")', content, count=1)
-            content = re.sub(r'\(date "([^"]*)"\)', f'(date "{date_str}")', content, count=1)
-
+            # Update title block. Templates may not contain (title "...") or
+            # (company "...") fields, so insert them into (title_block ...) when
+            # absent — otherwise the regex silently no-ops while the success
+            # message still claims the title/company was written.
+            if title_text:
+                if '(title "' in content:
+                    content = re.sub(r'\(title "([^"]*)"\)', f'(title "{title_text}")', content, count=1)
+                else:
+                    content = content.replace("(title_block", f'(title_block\n    (title "{title_text}")', 1)
+            if '(date "' in content:
+                content = re.sub(r'\(date "([^"]*)"\)', f'(date "{date_str}")', content, count=1)
             if company:
-                # Find and replace company, or add it if not present
-                if '(company' in content:
+                if '(company "' in content:
                     content = re.sub(r'\(company "([^"]*)"\)', f'(company "{company}")', content, count=1)
                 else:
-                    # Add company field after title
-                    content = re.sub(
-                        r'(title "([^"]*)")',
-                        rf'\1\n    (company "{company}")',
-                        content,
-                        count=1
-                    )
+                    content = content.replace("(title_block", f'(title_block\n    (company "{company}")', 1)
 
             sch_file.write_text(content)
+
+        # List files that were actually copied (templates vary — don't hardcode
+        # "fp-lib-table", which some templates don't ship).
+        created_files = sorted(p.name for p in path.iterdir() if p.is_file())
+        files_listing = "\n".join(f"- {n}" for n in created_files)
 
         return f"""# ✅ KiCad 9.0+ Project Created Successfully!
 
 **Project Path:** {path}
 **Project Name:** {project_name}
 **Title:** {title_text}
-**Company:** {company}
+**Company:** {company or '(none)'}
 **Template Used:** {template_path.name}
 
 ## 📄 Files Created:
 
-1. **{project_name}.kicad_pro** - KiCad project file
-2. **{project_name}.kicad_sch** - Schematic file
-3. **{project_name}.kicad_pcb** - PCB layout file
-4. **fp-lib-table** - Footprint library table
+{files_listing}
 
 ## 📖 How to Open in KiCad 9.0+:
 
@@ -191,4 +193,4 @@ Project is ready for KiCad 9.0+! 🚀
 
     except Exception as e:
         import traceback
-        return f"Error creating project: {e}\\n\\n{traceback.format_exc()}"
+        return f"Error creating project: {e}\n\n{traceback.format_exc()}"

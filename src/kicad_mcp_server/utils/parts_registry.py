@@ -42,12 +42,36 @@ class RegistryError(Exception):
     """Raised for registry access or validation failures."""
 
 
+class _NoCrossHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Block HTTP redirects to a different host.
+
+    ``asset_url_allowed`` only checks the URL passed in; urllib otherwise
+    silently follows 3xx to any host, letting a compromised registry point
+    asset downloads (or JSON metadata) at an attacker-controlled host.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        orig = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
+        new = (urllib.parse.urlparse(newurl).hostname or "").lower()
+        if orig and new and (new == orig or new.endswith("." + orig)):
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        raise RegistryError(f"redirect to disallowed host blocked: {newurl}")
+
+
+_DEFAULT_OPENER = urllib.request.build_opener(_NoCrossHostRedirect)
+
+
 def _fetch(url: str, opener=None) -> bytes:
     """GET a URL with a size cap. ``opener`` is injectable for tests."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    open_fn = opener or urllib.request.urlopen
+    open_fn = opener or _DEFAULT_OPENER.open
     with open_fn(req, timeout=HTTP_TIMEOUT) as resp:
+        declared = resp.headers.get("Content-Length")
         data = resp.read(MAX_ASSET_BYTES + 1)
+    # Honour Content-Length so a truncated stream (proxy/server drops the
+    # connection mid-asset) is caught, not silently written as a half-file.
+    if declared and declared.isdigit() and int(declared) > MAX_ASSET_BYTES:
+        raise RegistryError(f"asset exceeds {MAX_ASSET_BYTES} byte limit: {url}")
     if len(data) > MAX_ASSET_BYTES:
         raise RegistryError(f"asset exceeds {MAX_ASSET_BYTES} byte limit: {url}")
     return data
@@ -92,17 +116,22 @@ def filename_for_asset(url: str, part_id: str, fmt: str) -> str:
     return f"{part_id}{exts[0]}"
 
 
+# Module-level index cache keyed by registry URL. Previously the cache lived on
+# each RegistryClient instance, but the tools build a fresh client per call, so
+# the ~21k-entry index was re-downloaded on every search.
+_INDEX_CACHE: dict[str, list[dict]] = {}
+
+
 class RegistryClient:
     """Minimal client for the registry's static JSON API.
 
-    The full part index is fetched once and cached per client instance
-    (the default registry serves ~21k entries as one document).
+    The full parts index is fetched once and cached at module level (keyed by
+    registry URL); the tools construct a fresh client per call.
     """
 
     def __init__(self, registry_url: str = DEFAULT_REGISTRY_URL, opener=None):
         self.registry_url = registry_url.rstrip("/")
         self._opener = opener
-        self._index_cache: list[dict] | None = None
 
     def _get_json(self, url: str):
         try:
@@ -113,11 +142,18 @@ class RegistryClient:
             raise RegistryError(f"registry request failed: {exc}") from exc
 
     def index(self) -> list[dict]:
-        """Full parts index (cached)."""
-        if self._index_cache is None:
+        """Full parts index (cached at module level)."""
+        if self.registry_url not in _INDEX_CACHE:
             doc = self._get_json(f"{self.registry_url}/parts.json")
-            self._index_cache = doc if isinstance(doc, list) else doc.get("parts", [])
-        return self._index_cache
+            if isinstance(doc, list):
+                parts = doc
+            elif isinstance(doc, dict):
+                raw = doc.get("parts") or []
+                parts = raw if isinstance(raw, list) else []
+            else:
+                parts = []  # null / string / number — don't crash
+            _INDEX_CACHE[self.registry_url] = parts
+        return _INDEX_CACHE[self.registry_url]
 
     def search(self, query: str, limit: int = 20) -> list[dict]:
         """Case-insensitive AND-match of query tokens against id, name,
@@ -127,6 +163,8 @@ class RegistryClient:
             return []
         hits = []
         for part in self.index():
+            if not isinstance(part, dict):
+                continue
             haystack = " ".join(
                 str(part.get(k, ""))
                 for k in ("id", "name", "family", "category", "manufacturer")

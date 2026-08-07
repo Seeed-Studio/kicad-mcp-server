@@ -224,8 +224,6 @@ class SchematicParser:
                     if depth == 0 and len(sym_lines) > 1:
                         break
                     j += 1
-                    if j - li > 500:
-                        break
                 sym_block = '\n'.join(sym_lines)
 
                 # Extract pins from the entire symbol block (including sub-symbols)
@@ -303,8 +301,6 @@ class SchematicParser:
                     if depth == 0 and len(symbol_block) > 1:
                         break
                     j += 1
-                    if j - i > 200:  # Safety limit
-                        break
 
                 block_text = '\n'.join(symbol_block)
 

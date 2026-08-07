@@ -133,7 +133,7 @@ async def get_pcb_statistics(file_path: str) -> str:
                 f"# PCB Statistics: {file_path}",
                 "",
                 "## Board Information",
-                f"**Dimensions:** {stats['board_width']:.2f} x {stats['board_width']:.2f} mm",
+                f"**Dimensions:** {stats['board_width']:.2f} x {stats['board_height']:.2f} mm",
                 f"**Layers:** {stats['layers']}",
                 f"**Thickness:** {stats['thickness']:.2f} mm",
                 "",
@@ -302,11 +302,12 @@ async def analyze_pcb_nets(file_path: str) -> str:
             for span, count in via_stats["layer_spans"].items():
                 lines.append(f"- {span}: {count}x")
 
-        # Layer coverage
+        # Layer coverage — count each track on its own layer. Previously this
+        # added each net's TOTAL segment count to EVERY layer the net touches,
+        # inflating multi-layer net totals by the layer fanout.
         layer_counts: dict[str, int] = {}
-        for s in net_stats.values():
-            for layer in s["layers"]:
-                layer_counts[layer] = layer_counts.get(layer, 0) + s["segment_count"]
+        for t in parser.get_tracks():
+            layer_counts[t.layer] = layer_counts.get(t.layer, 0) + 1
 
         if layer_counts:
             lines += [
