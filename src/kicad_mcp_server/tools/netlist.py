@@ -1,11 +1,11 @@
 """Netlist generation and analysis tools for KiCad MCP Server."""
 
-import subprocess
 import tempfile
 from pathlib import Path
 
 from ..parsers.netlist_parser import NetlistParser
 from ..server import mcp
+from ..utils.kicad_cli import run_kicad_cli
 
 
 def _find_root_schematic(sch_path: Path) -> Path | None:
@@ -58,24 +58,21 @@ async def generate_netlist(
         netlist_path = Path(tempfile.gettempdir()) / (sch_path.stem + ".xml")
 
         # Try to use KiCad's netlist export
-        # Note: This requires KiCad to be installed and in PATH
+        # Note: Requires a KiCad installation — kicad-cli is located via
+        # PATH or the detected install directory (see utils.kicad_cli).
         try:
             # Use kicad-cli for headless export (no display required)
-            cmd = [
-                "kicad-cli",
-                "sch",
-                "export",
-                "netlist",
-                "--format",
-                "kicadxml",
-                "--output",
-                str(netlist_path),
-                str(sch_path),
-            ]
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
+            result = await run_kicad_cli(
+                [
+                    "sch",
+                    "export",
+                    "netlist",
+                    "--format",
+                    "kicadxml",
+                    "--output",
+                    str(netlist_path),
+                    str(sch_path),
+                ],
                 timeout=30,
             )
 
@@ -106,11 +103,12 @@ Use KiCad Schematic Editor GUI to export netlist.
 """
 
         except FileNotFoundError:
-            return """⚠️ kicad-cli not found in PATH.
+            return """⚠️ kicad-cli not found (PATH or KiCad install directory).
 
 Please:
 1. Install KiCad 7+ (https://www.kicad.org/)
-2. Ensure kicad-cli is in system PATH
+2. Ensure kicad-cli is in system PATH, or set the KICAD_CLI
+   environment variable to its full path
 3. Or use KiCad GUI to export netlist manually
 
 **Manual export:**

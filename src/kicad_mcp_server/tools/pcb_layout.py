@@ -1,22 +1,22 @@
 """PCB layout and routing tools."""
 
 import re
-import subprocess
 import uuid
 from pathlib import Path
 
 from ..server import mcp
+from ..utils.kicad_cli import run_kicad_cli
 from ..utils.kicad_version import get_pcb_version
 
-
-_KICAD_CLI_MISSING_MSG = """⚠️ kicad-cli not found in PATH.
+_KICAD_CLI_MISSING_MSG = """⚠️ kicad-cli not found (PATH or KiCad install directory).
 
 Gerber export requires KiCad's command-line tools.
 
 Please:
 1. Install KiCad 7+ (https://www.kicad.org/)
-2. Ensure kicad-cli is in system PATH
-   (on Windows typically C:\\Program Files\\KiCad\\<ver>\\bin)
+2. Ensure kicad-cli is in system PATH, or set the KICAD_CLI
+   environment variable to its full path
+   (on Windows typically C:\\Program Files\\KiCad\\<ver>\\bin\\kicad-cli.exe)
 
 **Manual export:**
 Open the board in KiCad's PCB editor → File → Fabrication Outputs → Gerbers.
@@ -245,22 +245,20 @@ async def export_gerber(
 
         out_path = Path(output_dir) if output_dir else pcb.parent / "gerber"
         out_path.mkdir(parents=True, exist_ok=True)
-        before = {p.name for p in out_path.iterdir()}
+        # Track name + mtime: a re-export rewrites the same files, and a pure
+        # name diff would then look like "nothing was produced".
+        before = {p.name: p.stat().st_mtime_ns for p in out_path.iterdir()}
 
-        def _run(cmd: list[str]) -> tuple[int, str]:
-            r = subprocess.run(cmd, capture_output=True, timeout=180)
+        async def _run(args: list[str]) -> tuple[int, str]:
+            r = await run_kicad_cli(args, timeout=180)
             return r.returncode, (r.stderr or b"").decode("utf-8", "replace").strip()
 
         # Gerbers first (required); drill is best-effort afterwards. Note the
         # subcommand is "gerbers" (plural) and the output flag is "-o", not
         # "--output-dir" — KiCad 7-10 all use this form. With no --layers it
         # plots every layer defined in the board, so it generalises to N-layer.
-        gerber_cmd = [
-            "kicad-cli", "pcb", "export", "gerbers",
-            "-o", str(out_path), str(pcb),
-        ]
         try:
-            rc, err = _run(gerber_cmd)
+            rc, err = await _run(["pcb", "export", "gerbers", "-o", str(out_path), str(pcb)])
         except FileNotFoundError:
             return _KICAD_CLI_MISSING_MSG
         if rc != 0:
@@ -270,12 +268,8 @@ async def export_gerber(
             )
 
         drill_note = ""
-        drill_cmd = [
-            "kicad-cli", "pcb", "export", "drill",
-            "-o", str(out_path), str(pcb),
-        ]
         try:
-            rc2, err2 = _run(drill_cmd)
+            rc2, err2 = await _run(["pcb", "export", "drill", "-o", str(out_path), str(pcb)])
             if rc2 != 0:
                 drill_note = (
                     f"\n\n⚠️ Drill export returned rc={rc2}: "
@@ -286,7 +280,11 @@ async def export_gerber(
             # surface it rather than swallow.
             drill_note = "\n\n⚠️ kicad-cli unavailable for drill export."
 
-        new_files = sorted({p.name for p in out_path.iterdir()} - before)
+        new_files = sorted(
+            p.name
+            for p in out_path.iterdir()
+            if p.name not in before or p.stat().st_mtime_ns != before[p.name]
+        )
         if not new_files:
             return (
                 f"⚠️ kicad-cli reported success but produced no files in "

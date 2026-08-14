@@ -2,13 +2,13 @@
 
 import json
 import re
-import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..models.types import DRCError, ERCError
 from ..server import mcp
+from ..utils.kicad_cli import run_kicad_cli
 
 
 def _temp_dir() -> Path:
@@ -246,20 +246,16 @@ async def run_erc(
         erc_report_path = _temp_dir() / (root.stem + "_erc.rpt")
 
         # Run ERC using kicad-cli (KiCad 7+)
-        cmd = [
-            "kicad-cli",
-            "sch",
-            "erc",
-            "--format",
-            "json",
-            "--output",
-            str(erc_report_path),
-            str(sch_path),
-        ]
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
+        result = await run_kicad_cli(
+            [
+                "sch",
+                "erc",
+                "--format",
+                "json",
+                "--output",
+                str(erc_report_path),
+                str(sch_path),
+            ],
             timeout=60,
         )
 
@@ -369,8 +365,9 @@ You can manually inspect the report file or re-run ERC in KiCad GUI.{subsheet_no
 
 **Schematic:** {schematic_path}
 
-KiCad's command-line tool (kicad-cli) is not installed or not on PATH.
-Install KiCad 7+ (https://www.kicad.org/) to run ERC."""
+KiCad's command-line tool (kicad-cli) could not be located on PATH or in the
+detected KiCad install directory. Install KiCad 7+ (https://www.kicad.org/),
+or point the KICAD_CLI environment variable at the kicad-cli executable."""
         return f"""❌ **File Not Found**
 
 **Schematic:** {schematic_path}
@@ -420,20 +417,16 @@ async def run_drc(
         drc_report_path = _temp_dir() / (pcb.stem + "_drc.rpt")
 
         # Run DRC using kicad-cli (KiCad 7+)
-        cmd = [
-            "kicad-cli",
-            "pcb",
-            "drc",
-            "--format",
-            "json",
-            "--output",
-            str(drc_report_path),
-            str(pcb),
-        ]
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
+        result = await run_kicad_cli(
+            [
+                "pcb",
+                "drc",
+                "--format",
+                "json",
+                "--output",
+                str(drc_report_path),
+                str(pcb),
+            ],
             timeout=60,
         )
 
