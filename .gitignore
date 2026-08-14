@@ -68,7 +68,7 @@ Thumbs.db
 # Test output and temporary files
 /tmp/
 test_*.py
-!tests/test_*.py
+!tests/**/test_*.py
 *_test_*.py
 
 # Temporary documentation
