@@ -1,11 +1,23 @@
 """Netlist generation and analysis tools for KiCad MCP Server."""
 
+import hashlib
 import tempfile
 from pathlib import Path
 
 from ..parsers.netlist_parser import NetlistParser
 from ..server import mcp
 from ..utils.kicad_cli import run_kicad_cli
+
+
+def netlist_cache_path(sch_path: Path) -> Path:
+    """Deterministic per-schematic netlist path in the temp directory.
+
+    Keying only on the file stem made two different projects that both have
+    e.g. a ``main.kicad_sch`` overwrite each other's exported netlist, so a
+    short digest of the resolved schematic path is mixed into the name.
+    """
+    digest = hashlib.sha256(str(sch_path.resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path(tempfile.gettempdir()) / f"{sch_path.stem}_{digest}.xml"
 
 
 def _find_root_schematic(sch_path: Path) -> Path | None:
@@ -55,7 +67,7 @@ async def generate_netlist(
 
         # KiCad 7+ uses kicad-cli for headless netlist export
         # Output to temp directory to avoid read-only volume issues
-        netlist_path = Path(tempfile.gettempdir()) / (sch_path.stem + ".xml")
+        netlist_path = netlist_cache_path(sch_path)
 
         # Try to use KiCad's netlist export
         # Note: Requires a KiCad installation — kicad-cli is located via
