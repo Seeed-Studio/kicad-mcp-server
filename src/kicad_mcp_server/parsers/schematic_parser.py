@@ -127,6 +127,31 @@ def _read_file_with_encoding_fallback(file_path: Path) -> str:
     return content
 
 
+def _merge_duplicate_references(
+    components: list[SchematicComponent],
+) -> list[SchematicComponent]:
+    """Merge multi-unit symbol instances that share a reference.
+
+    KiCad stores each unit of a multi-unit symbol as its own symbol block
+    (often spread across sub-sheets), but the physical component is one
+    entity — netlist lookups and per-reference reports expect it once. Pin
+    metadata from all units is unioned by pin number; the first instance's
+    value/footprint wins (units share them by construction).
+    """
+    merged: dict[str, SchematicComponent] = {}
+    for comp in components:
+        key = comp.reference or f"__unannotated_{len(merged)}"
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = comp
+            continue
+        known_pins = {str(p.get("number", "")) for p in existing.pins}
+        for p in comp.pins:
+            if str(p.get("number", "")) not in known_pins:
+                existing.pins.append(p)
+    return list(merged.values())
+
+
 class SchematicParser:
     """Parser for KiCad schematic files (.kicad_sch)."""
 
@@ -465,14 +490,52 @@ class SchematicParser:
 
         return sheets
 
-    def get_components(self) -> list[SchematicComponent]:
+    def get_components(self, recursive: bool = False) -> list[SchematicComponent]:
         """Get all components from schematic.
+
+        Args:
+            recursive: Also include components from hierarchical sub-sheets,
+                following Sheetfile references (depth-first, cycle-safe).
+                Real designs keep most components in sub-sheets, so callers
+                that cross-reference a full-hierarchy netlist must pass True.
 
         Returns:
             List of components
         """
         data = self._parse_file()
-        return [SchematicComponent.from_kicad_skip(c) for c in data["components"]]
+        components = [SchematicComponent.from_kicad_skip(c) for c in data["components"]]
+        if recursive:
+            seen = {str(self.file_path.resolve())}
+            for sheet in data["sheets"]:
+                components.extend(self._collect_subsheet_components(sheet["file"], seen))
+            components = _merge_duplicate_references(components)
+        return components
+
+    def _collect_subsheet_components(
+        self, sheet_file: str, seen: set[str]
+    ) -> list[SchematicComponent]:
+        """Recursively collect components from a referenced sub-sheet.
+
+        Missing or unparsable sub-sheets are skipped (a broken reference
+        must not wipe out the parent's components).
+        """
+        sub_path = self.file_path.parent / sheet_file
+        try:
+            key = str(sub_path.resolve())
+        except OSError:
+            return []
+        if key in seen or not sub_path.is_file():
+            return []
+        seen.add(key)
+        try:
+            sub = SchematicParser(str(sub_path))
+            sub_data = sub._parse_file()
+        except (FileNotFoundError, ValueError, OSError):
+            return []
+        components = [SchematicComponent.from_kicad_skip(c) for c in sub_data["components"]]
+        for sheet in sub_data["sheets"]:
+            components.extend(sub._collect_subsheet_components(sheet["file"], seen))
+        return components
 
     def get_nets(self) -> list[SchematicNet]:
         """Get all nets from schematic.

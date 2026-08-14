@@ -264,19 +264,19 @@ async def analyze_pin_functions(
         # Get components to analyze
         if reference:
             # Analyze specific component
-            components = [comp for comp in schematic_parser.get_components() if comp.reference == reference]
+            components = [comp for comp in schematic_parser.get_components(recursive=True) if comp.reference == reference]
             if not components:
                 return f"❌ **Component not found:** {reference}"
         else:
             # Analyze all components
-            components = list(schematic_parser.get_components())
+            components = list(schematic_parser.get_components(recursive=True))
 
         # Analyze pin functions.
         # The authoritative pin->net map comes from the netlist; pin name/type
         # are enriched from the schematic's lib_symbols via SchematicComponent.pins.
         # (Previously this relied on _extract_pin_info_from_symbol_details whose
         # only parse branch was `pass`, so the tool always returned empty.)
-        sch_components = {c.reference: c for c in schematic_parser.get_components()}
+        sch_components = {c.reference: c for c in schematic_parser.get_components(recursive=True)}
         nl_components = netlist_parser.get_components()
         pin_analysis = []
 
@@ -463,11 +463,11 @@ async def detect_pin_conflicts(
         netlist_parser = NetlistParser(str(netlist_path))
         schematic_parser = SchematicParser(str(sch_path))
 
-        OUTPUT_TYPES = {"output", "power_out", "open_collector", "open_emitter", "tri_state"}
+        output_types = {"output", "power_out", "open_collector", "open_emitter", "tri_state"}
 
         # (ref, pin_number) -> electrical_type
         pin_type_of: dict[tuple[str, str], str] = {}
-        for c in schematic_parser.get_components():
+        for c in schematic_parser.get_components(recursive=True):
             for p in c.pins:
                 pin_type_of[(c.reference, str(p.get("number", "")))] = (
                     p.get("electrical_type", "").lower()
@@ -487,7 +487,7 @@ async def detect_pin_conflicts(
             output_pins = []
             for ref, pin_num in connections:
                 pin_type = pin_type_of.get((ref, str(pin_num)), "")
-                if pin_type in OUTPUT_TYPES:
+                if pin_type in output_types:
                     output_pins.append(f"{ref}:{pin_num}")
 
             if len(output_pins) > 1:
@@ -614,7 +614,7 @@ async def extract_pinmux_config(
         netlist_parser = NetlistParser(str(netlist_path))
 
         # Find MCU components
-        components = list(schematic_parser.get_components())
+        components = list(schematic_parser.get_components(recursive=True))
         mcu_components = []
 
         for component in components:
@@ -658,7 +658,7 @@ No MCU components were found in the schematic.
 3. Try without component_type filter"""
 
         # pin number -> name from schematic lib_symbols
-        sch_components = {c.reference: c for c in schematic_parser.get_components()}
+        sch_components = {c.reference: c for c in schematic_parser.get_components(recursive=True)}
 
         # Extract pinmux configuration for each MCU
         pinmux_configs = []
