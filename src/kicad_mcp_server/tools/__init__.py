@@ -16,6 +16,7 @@ from . import (
     schematic_editor,
     schematic_search,
     validation,
+    visualization,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "schematic_search",
     "validation",
     "parts_registry",
+    "visualization",
 ]
