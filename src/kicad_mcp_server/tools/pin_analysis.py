@@ -19,30 +19,37 @@ from ..server import mcp
 async def _ensure_netlist(sch_path: Path) -> Path | None:
     """Find or generate a netlist for the given schematic.
 
-    Checks schematic directory first, then temp directory. If neither exists,
-    generates one via kicad-cli (auto-redirects to root schematic for sub-sheets).
+    Checks the schematic directory and the temp directory (legacy flat names
+    plus the per-schematic hashed cache name). If none exists, generates one
+    via kicad-cli (auto-redirects to root schematic for sub-sheets).
 
     Returns the netlist Path, or None on failure.
     """
-    # Check for netlist with the given schematic's stem
-    for stem in [sch_path.stem]:
-        local = sch_path.parent / (stem + ".xml")
-        if local.exists():
-            return local
-        temp_nl = Path(tempfile.gettempdir()) / (stem + ".xml")
-        if temp_nl.exists():
-            return temp_nl
+    from .netlist import netlist_cache_path
 
-    # Also check root schematic stem (sub-sheets redirect to root)
+    # Candidate schematics: the given sheet and, for sub-sheets, the root
+    # schematic that generate_netlist redirects to.
     pro_files = list(sch_path.parent.glob("*.kicad_pro"))
-    if pro_files:
-        root_stem = pro_files[0].stem
-        local = sch_path.parent / (root_stem + ".xml")
-        if local.exists():
-            return local
-        temp_nl = Path(tempfile.gettempdir()) / (root_stem + ".xml")
-        if temp_nl.exists():
-            return temp_nl
+    candidates: list[Path] = [sch_path]
+    if len(pro_files) == 1:
+        root_sch = pro_files[0].with_suffix(".kicad_sch")
+        if root_sch.exists() and root_sch.resolve() != sch_path.resolve():
+            candidates.append(root_sch)
+
+    def _probe() -> Path | None:
+        for cand in candidates:
+            for path in [
+                cand.parent / (cand.stem + ".xml"),  # GUI-exported next to sheet
+                Path(tempfile.gettempdir()) / (cand.stem + ".xml"),  # legacy flat name
+                netlist_cache_path(cand),  # current hashed name
+            ]:
+                if path.exists():
+                    return path
+        return None
+
+    found = _probe()
+    if found:
+        return found
 
     from .netlist import generate_netlist
 
@@ -50,15 +57,7 @@ async def _ensure_netlist(sch_path: Path) -> Path | None:
     if "❌" in result:
         return None
 
-    # Check all possible locations after generation
-    for stem in [sch_path.stem, pro_files[0].stem if pro_files else ""]:
-        if not stem:
-            continue
-        for base in [sch_path.parent, Path(tempfile.gettempdir())]:
-            candidate = base / (stem + ".xml")
-            if candidate.exists():
-                return candidate
-    return None
+    return _probe()
 
 # MCU family component patterns
 MCU_PATTERNS = {
