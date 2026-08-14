@@ -176,7 +176,6 @@ async def analyze_pcb_nets(file_path: str) -> str:
             tracks = data["tracks"]
             vias = data["vias"]
             zones = data["zones"]
-            stats = parser.get_statistics()
 
             lines = [
                 f"# PCB Routing Analysis: {file_path}",
@@ -242,7 +241,7 @@ async def analyze_pcb_nets(file_path: str) -> str:
                     "|-----|-------------|----------|--------|--------|",
                 ]
                 for name, s in top_nets:
-                    unique_widths = sorted(set(f"{w:.3f}" for w in s["widths"]))
+                    unique_widths = sorted({f"{w:.3f}" for w in s["widths"]})
                     widths_str = ", ".join(unique_widths)
                     layers_str = ", ".join(sorted(s["layers"]))
                     lines.append(
@@ -329,7 +328,7 @@ async def analyze_pcb_nets(file_path: str) -> str:
                 "|-----|-------------|----------|--------|--------|",
             ]
             for name, s in top_nets:
-                unique_widths = sorted(set(f"{w:.3f}" for w in s["widths"]))
+                unique_widths = sorted({f"{w:.3f}" for w in s["widths"]})
                 widths_str = ", ".join(unique_widths)
                 layers_str = ", ".join(s["layers"])
                 lines.append(
@@ -382,9 +381,9 @@ async def find_tracks_by_net(file_path: str, net_name: str) -> str:
 
             if not matched_tracks and not matched_vias:
                 # Try case-insensitive partial match
-                all_nets = sorted(set(
+                all_nets = sorted({
                     t.get("net", "") for t in data["tracks"] if t.get("net")
-                ))
+                })
                 suggestions = [n for n in all_nets if net_name.lower() in n.lower()]
                 if suggestions:
                     return (
@@ -396,7 +395,7 @@ async def find_tracks_by_net(file_path: str, net_name: str) -> str:
 
             total_length = sum(t.get("length", 0) for t in matched_tracks)
             widths = [t["width"] for t in matched_tracks]
-            layers = sorted(set(t["layer"] for t in matched_tracks))
+            layers = sorted({t["layer"] for t in matched_tracks})
 
             lines = [
                 f"# Track Analysis: {net_name}",
@@ -411,7 +410,7 @@ async def find_tracks_by_net(file_path: str, net_name: str) -> str:
             ]
 
             if widths:
-                unique_widths = sorted(set(f"{w:.4f}" for w in widths))
+                unique_widths = sorted({f"{w:.4f}" for w in widths})
                 lines.append(f"**Track Widths:** {', '.join(unique_widths)} mm")
 
             if matched_tracks:
@@ -463,7 +462,7 @@ async def find_tracks_by_net(file_path: str, net_name: str) -> str:
             all_tracks = parser.get_tracks()
             matching = [t for t in all_tracks if net_name.lower() in t.net.lower()]
             if matching:
-                net_names = sorted(set(t.net for t in matching))
+                net_names = sorted({t.net for t in matching})
                 return (
                     f"# Tracks for '{net_name}'\n\n"
                     f"Exact match not found. Did you mean one of these?\n"
@@ -473,7 +472,7 @@ async def find_tracks_by_net(file_path: str, net_name: str) -> str:
 
         total_length = sum(t.length for t in tracks)
         widths = [t.width for t in tracks]
-        layers = sorted(set(t.layer for t in tracks))
+        layers = sorted({t.layer for t in tracks})
 
         lines = [
             f"# Track Analysis: {net_name}",
@@ -486,9 +485,9 @@ async def find_tracks_by_net(file_path: str, net_name: str) -> str:
         ]
 
         if widths:
-            unique_widths = sorted(set(f"{w:.4f}" for w in widths))
+            unique_widths = sorted({f"{w:.4f}" for w in widths})
             lines.append(f"**Track Widths:** {', '.join(unique_widths)} mm")
-            if len(set(round(w, 4) for w in widths)) > 1:
+            if len({round(w, 4) for w in widths}) > 1:
                 lines.append("⚠️ Mixed track widths detected — may indicate manual routing or design rule override.")
 
         # Track segment details
@@ -695,7 +694,7 @@ async def analyze_pcb_signal_integrity(
             ]
             for name in sorted(rf_nets):
                 s = net_stats[name]
-                widths = ", ".join(sorted(set(f"{w:.3f}" for w in s["widths"])))
+                widths = ", ".join(sorted({f"{w:.3f}" for w in s["widths"]}))
                 lines.append(f"| {name} | {s['total_length']:.3f} mm | {widths} mm | {s['segment_count']} |")
 
         # Top signal nets by length (exclude power/GND)
@@ -788,7 +787,7 @@ async def analyze_pcb_power_integrity(file_path: str) -> str:
                 ]
                 for z in gnd_zones:
                     lines.append(f"| {z['net_name']} | {z.get('layer', 'N/A')} |")
-                gnd_layers = set(z.get("layer", "") for z in gnd_zones)
+                gnd_layers = {z.get("layer", "") for z in gnd_zones}
                 lines.append(f"\n**GND Coverage:** {len(gnd_zones)} zones across {len(gnd_layers)} layers")
 
             # Power net tracks
@@ -874,7 +873,7 @@ async def analyze_pcb_power_integrity(file_path: str) -> str:
 
             total_gnd_zones = len(gnd_zones)
             filled_gnd_zones = sum(1 for z in gnd_zones if z.filled)
-            gnd_layers = set(z.layer for z in gnd_zones)
+            gnd_layers = {z.layer for z in gnd_zones}
             lines += [
                 "",
                 f"**GND Coverage:** {total_gnd_zones} zones across {len(gnd_layers)} layers "
