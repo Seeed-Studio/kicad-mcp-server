@@ -48,7 +48,11 @@ class TestFindKicadCli:
 
     def test_install_dir_fallback_windows_layout(self, monkeypatch, tmp_path):
         """bin/kicad-cli(.exe) next to the detected share/kicad directory."""
-        exe = tmp_path / "bin" / "kicad-cli.exe"
+        # The wrapper looks for kicad-cli.exe only on Windows; the bare name
+        # elsewhere. Mirror that so the test exercises the branch its platform
+        # actually uses (the CI matrix covers both).
+        exe_name = "kicad-cli.exe" if sys.platform == "win32" else "kicad-cli"
+        exe = tmp_path / "bin" / exe_name
         exe.parent.mkdir()
         exe.write_bytes(b"")
         monkeypatch.setattr(kicad_cli.shutil, "which", lambda name: None)
