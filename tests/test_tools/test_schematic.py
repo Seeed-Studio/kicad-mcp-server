@@ -1,7 +1,8 @@
 """Tests for schematic tools."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from kicad_mcp_server.parsers.schematic_parser import SchematicParser
 from kicad_mcp_server.tools import schematic

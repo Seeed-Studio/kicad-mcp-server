@@ -34,14 +34,6 @@ Comprehensive documentation for the KiCad MCP Server - a complete hardware desig
 - Device tree bindings database
 - Customization and integration
 
-### Test Code Generation
-**[TEST_GENERATION.md](./TEST_GENERATION.md)** - Automated Test Generation Guide
-- Hardware test generation (pytest, Unity, Google Test)
-- GPIO, I2C, SPI, pinmux testing
-- Framework-specific features
-- CI/CD integration
-- Test customization
-
 ## Usage Guides
 
 ### Complete Embedded Development Workflow

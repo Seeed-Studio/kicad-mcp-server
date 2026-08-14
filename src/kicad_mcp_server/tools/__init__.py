@@ -30,4 +30,5 @@ __all__ = [
     "pin_analysis",
     "schematic_search",
     "validation",
+    "parts_registry",
 ]
