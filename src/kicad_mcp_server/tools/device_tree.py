@@ -411,7 +411,7 @@ Please specify a supported SOC family."""
         }
 
         # Analyze components and extract peripheral configuration
-        components = list(schematic_parser.get_components())
+        components = list(schematic_parser.get_components(recursive=True))
 
         for component in components:
             comp_ref = component.reference
@@ -620,7 +620,7 @@ async def extract_gpio_config(
 
         # pin number -> name from schematic lib_symbols
         pin_name_of: dict[tuple[str, str], str] = {}
-        for c in schematic_parser.get_components():
+        for c in schematic_parser.get_components(recursive=True):
             for p in c.pins:
                 pin_name_of[(c.reference, str(p.get("number", "")))] = p.get("name", "")
 
@@ -760,7 +760,7 @@ async def extract_i2c_devices(
         # Extract I2C devices
         i2c_devices = []
 
-        components = list(schematic_parser.get_components())
+        components = list(schematic_parser.get_components(recursive=True))
 
         for component in components:
             comp_ref = component.reference
@@ -878,7 +878,7 @@ async def extract_spi_devices(
         # Extract SPI devices
         spi_devices = []
 
-        components = list(schematic_parser.get_components())
+        components = list(schematic_parser.get_components(recursive=True))
 
         for component in components:
             comp_ref = component.reference
@@ -987,7 +987,7 @@ async def extract_power_domains(
         # Extract power components
         power_components = []
 
-        components = list(schematic_parser.get_components())
+        components = list(schematic_parser.get_components(recursive=True))
 
         for component in components:
             comp_ref = component.reference
@@ -995,7 +995,7 @@ async def extract_power_domains(
             comp_library = component.library_id
 
             # Check if this is a power-related component
-            power_keywords = ["REG", "LDO", "BUCK", "BOOST", "TPS", "AP", "LP", "AXP"]
+            power_keywords = ["REG", "LDO", "BUCK", "BOOST", "TPS", "AP", "LP", "AXP", "PMIC", "NPM"]
             if any(keyword in comp_value.upper() for keyword in power_keywords):
                 power_components.append({
                     "reference": comp_ref,
@@ -1035,6 +1035,8 @@ No power management components were found in the schematic.
                 comp_type = "Buck Converter"
             elif "BOOST" in comp["value"].upper():
                 comp_type = "Boost Converter"
+            elif "PMIC" in comp["value"].upper() or "NPM" in comp["value"].upper():
+                comp_type = "PMIC"
 
             result += f"| {comp['reference']} | {comp['value']} | {comp_type} |\n"
 
@@ -1114,7 +1116,7 @@ resolve all conflicts before attempting device tree generation."""
 
         # Check for MCU components
         schematic_parser = SchematicParser(str(sch_path))
-        components = list(schematic_parser.get_components())
+        components = list(schematic_parser.get_components(recursive=True))
 
         mcu_found = False
         for component in components:

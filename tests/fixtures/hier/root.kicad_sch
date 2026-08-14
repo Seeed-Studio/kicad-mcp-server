@@ -1,0 +1,38 @@
+(kicad_sch (version 20231120) (generator eeschema)
+
+  (paper "A4")
+
+  (lib_symbols
+  )
+
+  (symbol (lib_id "Device:R") (at 100 100 0) (unit 1)
+    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)
+    (uuid aaaaaaaa-0000-0000-0000-000000000001)
+    (property "Reference" "R1" (at 95 95 0)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Value" "10k" (at 95 105 0)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Footprint" "Resistor_SMD:R_0805_2012Metric" (at 100 100 0)
+      (effects (font (size 1.27 1.27)) hide)
+    )
+    (pin "1" (uuid 11111111-0000-0000-0000-111111111111))
+    (pin "2" (uuid 22222222-0000-0000-0000-222222222222))
+  )
+
+  (sheet
+    (at 150 50)
+    (size 30 20)
+    (property "Sheetname" "Power")
+    (property "Sheetfile" "child.kicad_sch")
+  )
+
+  (sheet
+    (at 150 100)
+    (size 30 20)
+    (property "Sheetname" "Ghost")
+    (property "Sheetfile" "missing.kicad_sch")
+  )
+
+)

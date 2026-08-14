@@ -1,0 +1,24 @@
+(kicad_sch (version 20231120) (generator eeschema)
+
+  (paper "A4")
+
+  (lib_symbols
+  )
+
+  (symbol (lib_id "Device:C") (at 80 80 0) (unit 1)
+    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)
+    (uuid bbbbbbbb-0000-0000-0000-000000000002)
+    (property "Reference" "C9" (at 75 75 0)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Value" "100nF" (at 75 85 0)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Footprint" "Capacitor_SMD:C_0603_1608Metric" (at 80 80 0)
+      (effects (font (size 1.27 1.27)) hide)
+    )
+    (pin "1" (uuid 33333333-0000-0000-0000-333333333333))
+    (pin "2" (uuid 44444444-0000-0000-0000-444444444444))
+  )
+
+)
