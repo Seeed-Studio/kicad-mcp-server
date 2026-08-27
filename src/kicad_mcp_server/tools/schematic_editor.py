@@ -205,6 +205,32 @@ def _extract_pins_from_symbol_block(symbol_block: str) -> list[tuple[str, str, s
     return pins
 
 
+def _get_root_uuid(content: str) -> str:
+    """Read the schematic file's root uuid (first top-level uuid)."""
+    m = re.search(r'\(uuid\s+"([0-9a-f-]+)"', content)
+    return m.group(1) if m else ""
+
+
+def _ensure_root_uuid(content: str) -> tuple[str, str]:
+    """Guarantee the file has a root uuid; returns (content, uuid)."""
+    existing = _get_root_uuid(content)
+    if existing:
+        return content, existing
+    new_uuid = str(uuid.uuid4())
+    if "(generator" in content:
+        content = re.sub(
+            r'(\(generator[^\n]*\n(?:\t\(generator_version[^\n]*\n)?)',
+            r'\1' + f'\t(uuid "{new_uuid}")\n',
+            content,
+            count=1,
+        )
+    else:
+        content = content.replace(
+            "(kicad_sch", f'(kicad_sch\n\t(uuid "{new_uuid}")', 1
+        )
+    return content, new_uuid
+
+
 @mcp.tool()
 async def add_component_from_library(
     file_path: str,
@@ -256,22 +282,29 @@ async def add_component_from_library(
         pins_str = "\n".join(pin_entries) if pin_entries else ""
 
         # --- Insert component instance ---
+        # KiCad 8/9 instance format: properties carry NO inner uuid, and the
+        # (instances) block is REQUIRED — its path is "/" + the file's root
+        # uuid, not just "/". Omitting either makes kicad-cli refuse the file.
+        content, root_uuid = _ensure_root_uuid(content)
+        project_name = Path(file_path).stem
         component_entry = f'''  (symbol (lib_id "{lib_id}") (at {x} {y} 0) (unit {unit})
   (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)
   (uuid "{comp_uuid}")
   (property "Reference" "{reference}" (at {x} {y - 5} 0)
     (effects (font (size 1.27 1.27)))
-    (uuid "{uuid.uuid4()}")
   )
   (property "Value" "{value}" (at {x} {y + 2.54} 0)
     (effects (font (size 1.27 1.27)))
-    (uuid "{uuid.uuid4()}")
   )
   (property "Footprint" "{footprint}" (at {x} {y + 5.08} 0)
     (effects (font (size 1.27 1.27)) (hide yes))
-    (uuid "{uuid.uuid4()}")
   )
 {pins_str}
+  (instances
+    (project "{project_name}"
+      (path "/{root_uuid}" (reference "{reference}") (unit {unit}))
+    )
+  )
 )'''
 
         # Refuse to write a symbol instance whose lib_id has no matching

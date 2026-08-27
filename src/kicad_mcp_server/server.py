@@ -33,6 +33,7 @@ from .tools import (  # noqa: F401, E402
     project,
     schematic,
     schematic_editor,
+    schematic_net,
     schematic_search,
     validation,
     visualization,

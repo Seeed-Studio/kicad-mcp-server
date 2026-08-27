@@ -14,6 +14,7 @@ from . import (
     project,
     schematic,
     schematic_editor,
+    schematic_net,
     schematic_search,
     validation,
     visualization,
@@ -33,4 +34,5 @@ __all__ = [
     "validation",
     "parts_registry",
     "visualization",
+    "schematic_net",
 ]
