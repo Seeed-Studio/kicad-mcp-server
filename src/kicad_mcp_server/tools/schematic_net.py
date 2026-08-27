@@ -155,52 +155,54 @@ def get_pin_geometry(
 ) -> list[dict] | None:
     """Compute absolute pin positions for a placed component by reference.
 
-    Returns a list of {number, name, electrical_type, x, y} dicts, or None
-    when the reference is not found in the schematic.
+    Multi-unit symbols place one instance per unit; all instances sharing a
+    reference contribute their pins, each transformed by its own position
+    and rotation. Returns a list of {number, name, electrical_type, x, y}
+    dicts, or None when the reference is not found in the schematic.
     """
-    instances = _placed_instances(content)
-    inst = next((i for i in instances if i["reference"] == reference), None)
-    if inst is None:
+    instances = [i for i in _placed_instances(content) if i["reference"] == reference]
+    if not instances:
         return None
 
     lib_block = _lib_symbols_block(content)
-    symbol_block = _symbol_definition_block(lib_block, inst["lib_id"])
-    if symbol_block is None:
-        return []
-
-    unit = inst["unit"]
-    base_name = inst["lib_id"].split(":")[-1]
     pins: list[dict] = []
     seen: set[str] = set()
-    for sub_name, sub_text in _iter_subsymbol_spans(symbol_block):
-        # Sub-symbol naming: "<lib_id>_<unit>_<convert>"; unit 0 = common to
-        # all units. The embedded definition may use either the full
-        # "Device:R_0_1" form or the bare "R_0_1" form.
-        sub_unit = None
-        for prefix in (inst["lib_id"], base_name):
-            m = re.match(re.escape(prefix) + r"_(\d+)_(\d+)$", sub_name)
-            if m:
-                sub_unit = int(m.group(1))
-                break
-        if sub_unit is None or sub_unit not in (0, unit):
+    for inst in instances:
+        symbol_block = _symbol_definition_block(lib_block, inst["lib_id"])
+        if symbol_block is None:
             continue
-        for pm in _PIN_RE.finditer(sub_text):
-            number = pm.group("number")
-            if number in seen:
+
+        unit = inst["unit"]
+        base_name = inst["lib_id"].split(":")[-1]
+        for sub_name, sub_text in _iter_subsymbol_spans(symbol_block):
+            # Sub-symbol naming: "<lib_id>_<unit>_<convert>"; unit 0 =
+            # common to all units. The embedded definition may use either
+            # the full "Device:R_0_1" form or the bare "R_0_1" form.
+            sub_unit = None
+            for prefix in (inst["lib_id"], base_name):
+                m = re.match(re.escape(prefix) + r"_(\d+)_(\d+)$", sub_name)
+                if m:
+                    sub_unit = int(m.group(1))
+                    break
+            if sub_unit is None or sub_unit not in (0, unit):
                 continue
-            seen.add(number)
-            dx, dy = _rotate_offset(
-                float(pm.group("x")), float(pm.group("y")), inst["angle"]
-            )
-            pins.append(
-                {
-                    "number": number,
-                    "name": pm.group("name"),
-                    "electrical_type": pm.group("etype"),
-                    "x": round(inst["x"] + dx, 3),
-                    "y": round(inst["y"] + dy, 3),
-                }
-            )
+            for pm in _PIN_RE.finditer(sub_text):
+                number = pm.group("number")
+                if number in seen:
+                    continue
+                seen.add(number)
+                dx, dy = _rotate_offset(
+                    float(pm.group("x")), float(pm.group("y")), inst["angle"]
+                )
+                pins.append(
+                    {
+                        "number": number,
+                        "name": pm.group("name"),
+                        "electrical_type": pm.group("etype"),
+                        "x": round(inst["x"] + dx, 3),
+                        "y": round(inst["y"] + dy, 3),
+                    }
+                )
     return pins
 
 
