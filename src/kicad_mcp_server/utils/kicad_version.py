@@ -64,8 +64,17 @@ def get_kicad_symbol_dir() -> Path | None:
     """Get the KiCad symbol library directory (.kicad_sym files)."""
     kicad = find_kicad_install()
     if kicad:
-        install_path, _version = kicad
-        sym_dir = install_path / "share" / "kicad" / "symbols"
+        install_path, version_marker = kicad
+        # find_kicad_install() returns different path shapes per platform:
+        # Windows returns the top-level "<...>/KiCad/<version>" dir, with
+        # symbols nested under "share/kicad/symbols". Linux/macOS instead
+        # already return the "share/kicad" (or SharedSupport) directory
+        # itself, so appending "share/kicad" again pointed at a path that
+        # never exists there.
+        if version_marker in ("linux", "macos"):
+            sym_dir = install_path / "symbols"
+        else:
+            sym_dir = install_path / "share" / "kicad" / "symbols"
         if sym_dir.is_dir():
             return sym_dir
     return None
