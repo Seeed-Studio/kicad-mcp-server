@@ -205,6 +205,290 @@ def _extract_pins_from_symbol_block(symbol_block: str) -> list[tuple[str, str, s
     return pins
 
 
+# ---------------------------------------------------------------------------
+# Pin anchor geometry (for label placement)
+# ---------------------------------------------------------------------------
+
+_PIN_GEOM_RE = re.compile(
+    r"\(pin\s+(?P<etype>\w+)\s+\w+\s+"
+    r"\(at\s+(?P<x>-?[\d.]+)\s+(?P<y>-?[\d.]+)\s+(?P<angle>-?[\d.]+)\)"
+    r"[\s\S]*?"
+    r'\(number\s+"(?P<number>[^"]*)"'
+)
+
+
+def _lib_symbols_block(content: str) -> str:
+    """Text of the (lib_symbols ...) section, or ''."""
+    m = re.search(r"\(lib_symbols\b", content)
+    if not m:
+        return ""
+    start = m.start()
+    depth = 0
+    for i in range(start, len(content)):
+        if content[i] == "(":
+            depth += 1
+        elif content[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return content[start : i + 1]
+    return ""
+
+
+def _symbol_def_block(lib_block: str, lib_id: str) -> str | None:
+    m = re.search(r'\(symbol\s+"' + re.escape(lib_id) + r'"(?!\w)', lib_block)
+    if not m:
+        return None
+    start = m.start()
+    depth = 0
+    for i in range(start, len(lib_block)):
+        if lib_block[i] == "(":
+            depth += 1
+        elif lib_block[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return lib_block[start : i + 1]
+    return None
+
+
+def _lib_pin_offset(symbol_block: str, lib_id: str, unit: int, pin: str) -> tuple[float, float] | None:
+    """Lib-space offset of one pin, honouring the unit sub-symbol filter.
+
+    Sub-symbols are named "<lib_id>_<unit>_<convert>" (or the bare
+    "<name>_<unit>_<convert>" form); unit 0 = common to all units.
+    """
+    base = lib_id.split(":")[-1]
+    for sub_m in re.finditer(r'\(symbol\s+"([^"]+)"', symbol_block):
+        sub_name = sub_m.group(1)
+        if sub_name == lib_id:
+            continue
+        sub_unit = None
+        for prefix in (lib_id, base):
+            mm = re.match(re.escape(prefix) + r"_(\d+)_(\d+)$", sub_name)
+            if mm:
+                sub_unit = int(mm.group(1))
+                break
+        if sub_unit is None or sub_unit not in (0, unit):
+            continue
+        # balanced span of this sub-symbol block
+        start = sub_m.start()
+        depth = 0
+        for i in range(start, len(symbol_block)):
+            if symbol_block[i] == "(":
+                depth += 1
+            elif symbol_block[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+        for pm in _PIN_GEOM_RE.finditer(symbol_block[start : i + 1]):
+            if pm.group("number") == pin:
+                return float(pm.group("x")), float(pm.group("y"))
+    return None
+
+
+def _pin_anchor(content: str, reference: str, pin: str) -> tuple[float, float, int] | None:
+    """Absolute (x, y) and outward angle of a placed component's pin.
+
+    Symbol libraries use a Y-UP axis while schematic sheets store Y growing
+    DOWNWARD, so the pin offset's Y is negated on placement; the returned
+    angle (0/90/180/270) points away from the symbol body so labels fan out.
+    """
+    lib = _lib_symbols_block(content)
+    inst_re = re.compile(
+        r'\(symbol\s+\(lib_id\s+"(?P<lib_id>[^"]+)"\)\s+'
+        r"\(at\s+(?P<x>-?[\d.]+)\s+(?P<y>-?[\d.]+)\s+(?P<angle>-?[\d.]+)\)\s+"
+        r"\(unit\s+(?P<unit>\d+)\)"
+    )
+    body = content.replace(lib, "") if lib else content
+    for m in inst_re.finditer(body):
+        tail = body[m.start() : m.start() + 4000]
+        ref_m = re.search(r'\(property\s+"Reference"\s+"([^"]*)"', tail)
+        if not ref_m or ref_m.group(1) != reference:
+            continue
+        ix, iy, iangle, unit = (
+            float(m.group("x")),
+            float(m.group("y")),
+            float(m.group("angle")),
+            int(m.group("unit")),
+        )
+        block = _symbol_def_block(lib, m.group("lib_id"))
+        if block is None:
+            return None
+        offset = _lib_pin_offset(block, m.group("lib_id"), unit, pin)
+        if offset is None:
+            return None
+        dx, dy = offset
+        r = int(round(iangle)) % 360
+        if r == 90:
+            dx, dy = -dy, dx
+        elif r == 180:
+            dx, dy = -dx, -dy
+        elif r == 270:
+            dx, dy = dy, -dx
+        sx, sy = dx, -dy  # lib Y-UP -> sheet Y-DOWN
+        if abs(sx) >= abs(sy):
+            angle = 0 if sx >= 0 else 180
+        else:
+            angle = 90 if sy < 0 else 270
+        return ix + sx, iy + sy, angle
+    return None
+
+
+def _append_top_level(content: str, entry: str) -> str:
+    stripped = content.rstrip()
+    if not stripped.endswith(")"):
+        return content + "\n" + entry + "\n"
+    return stripped[:-1] + entry + "\n)\n"
+
+
+_LABEL_SHAPES = ("input", "output", "bidirectional", "tri_state", "passive")
+
+_JUSTIFY = {0: "left", 180: "right", 90: "bottom", 270: "top"}
+
+
+def _resolve_label_target(
+    file_path: str, reference: str, pin: str, x: float | None, y: float | None
+) -> tuple[str, float, float, int] | str:
+    """Common target resolution for label tools: exact pin anchor by default,
+    explicit coordinates when pin lookups are not applicable."""
+    content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+    if x is not None and y is not None:
+        return content, x, y, 0
+    anchor = _pin_anchor(content, reference, pin)
+    if anchor is None:
+        return (
+            f"❌ Pin '{pin}' not found on component '{reference}' — place the "
+            f"component first, or pass explicit x/y coordinates."
+        )
+    return content, anchor[0], anchor[1], anchor[2]
+
+
+@mcp.tool()
+async def add_hierarchical_label(
+    file_path: str,
+    reference: str,
+    pin: str,
+    label_name: str = "",
+    shape: str = "input",
+    x: float | None = None,
+    y: float | None = None,
+) -> str:
+    """Add a hierarchical label on a component pin (cross-sheet connection).
+
+    Hierarchical labels are how signals cross sheet boundaries in KiCad: a
+    label placed in a sub-sheet appears as a same-named pin on the parent
+    sheet's sheet symbol, connecting the two. Placing them by hand for
+    every cross-sheet signal is the classic tedium this automates.
+
+    The label anchors EXACTLY on the pin (computed from the embedded
+    symbol geometry incl. rotation and the library-vs-sheet Y flip), so
+    the connection is electrically valid — verify with generate_netlist.
+
+    Args:
+        file_path: Path to the .kicad_sch file (the SUB-sheet for signals
+            going up to its parent).
+        reference: Component reference (e.g. 'U1').
+        pin: Pin number.
+        label_name: Label text; defaults to the reference+pin when empty.
+        shape: Electrical direction: input, output, bidirectional,
+            tri_state or passive (ERC uses this).
+        x/y: Explicit anchor coordinates (overrides reference/pin).
+
+    Returns:
+        Confirmation with the exact anchor position.
+    """
+    if shape not in _LABEL_SHAPES:
+        return f"❌ Invalid shape '{shape}'. Options: {', '.join(_LABEL_SHAPES)}"
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return f"Error: File {file_path} does not exist"
+
+        resolved = _resolve_label_target(file_path, reference, pin, x, y)
+        if isinstance(resolved, str):
+            return resolved
+        content, ax, ay, angle = resolved
+
+        name = label_name or f"{reference}.{pin}"
+        justify = _JUSTIFY.get(angle, "left")
+        entry = (
+            f'\t(hierarchical_label "{name}" (shape {shape}) (at {round(ax, 3)} {round(ay, 3)} {angle})\n'
+            f"\t\t(effects (font (size 1.27 1.27)) (justify {justify}))\n"
+            f'\t\t(uuid "{uuid.uuid4()}")\n'
+            f"\t)\n"
+        )
+        path.write_text(_append_top_level(content, entry), encoding="utf-8")
+        return (
+            f"✅ Hierarchical label '{name}' ({shape}) anchored on {reference}.{pin} "
+            f"at ({round(ax, 3)}, {round(ay, 3)}) angle {angle}°"
+        )
+    except Exception as e:
+        import traceback
+
+        return f"Error adding hierarchical label: {e}\n\n{traceback.format_exc()}"
+
+
+@mcp.tool()
+async def add_global_label(
+    file_path: str,
+    reference: str,
+    pin: str,
+    label_name: str,
+    shape: str = "input",
+    x: float | None = None,
+    y: float | None = None,
+) -> str:
+    """Add a global label on a component pin (project-wide connection).
+
+    Global labels connect same-named signals anywhere in the whole
+    hierarchy regardless of sheets — useful for power-style rails and
+    cross-cutting signals where a hierarchical parent/child chain would
+    be awkward.
+
+    Args:
+        file_path: Path to the .kicad_sch file.
+        reference: Component reference (e.g. 'U1').
+        pin: Pin number.
+        label_name: Global net name (required — globals are named nets).
+        shape: Electrical direction: input, output, bidirectional,
+            tri_state or passive.
+        x/y: Explicit anchor coordinates (overrides reference/pin).
+
+    Returns:
+        Confirmation with the exact anchor position.
+    """
+    if shape not in _LABEL_SHAPES:
+        return f"❌ Invalid shape '{shape}'. Options: {', '.join(_LABEL_SHAPES)}"
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return f"Error: File {file_path} does not exist"
+
+        resolved = _resolve_label_target(file_path, reference, pin, x, y)
+        if isinstance(resolved, str):
+            return resolved
+        content, ax, ay, angle = resolved
+
+        justify = _JUSTIFY.get(angle, "left")
+        entry = (
+            f'\t(global_label "{label_name}" (shape {shape}) (at {round(ax, 3)} {round(ay, 3)} {angle})\n'
+            f"\t\t(effects (font (size 1.27 1.27)) (justify {justify}))\n"
+            f'\t\t(uuid "{uuid.uuid4()}")\n'
+            f'\t\t(property "Intersheetrefs" "${{INTERSHEET_REFS}}" (at 0 0 0)\n'
+            f"\t\t\t(effects (font (size 1.27 1.27)) hide)\n"
+            f"\t\t)\n"
+            f"\t)\n"
+        )
+        path.write_text(_append_top_level(content, entry), encoding="utf-8")
+        return (
+            f"✅ Global label '{label_name}' ({shape}) anchored on {reference}.{pin} "
+            f"at ({round(ax, 3)}, {round(ay, 3)}) angle {angle}°"
+        )
+    except Exception as e:
+        import traceback
+
+        return f"Error adding global label: {e}\n\n{traceback.format_exc()}"
+
+
 @mcp.tool()
 async def add_component_from_library(
     file_path: str,
