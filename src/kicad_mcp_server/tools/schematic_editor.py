@@ -256,20 +256,23 @@ async def add_component_from_library(
         pins_str = "\n".join(pin_entries) if pin_entries else ""
 
         # --- Insert component instance ---
+        # NOTE: schematic symbol-instance (property ...) blocks must NOT contain
+        # a nested (uuid ...) field in this KiCad 9 file format (generator_version
+        # "9.0", version 20250114) -- confirmed against KiCad's own
+        # template/Arduino_Mega/Arduino_Mega.kicad_sch. Adding one is silently
+        # accepted by lenient parsers (sexpdata, kicad-skip) but makes KiCad's own
+        # strict loader (kicad-cli and the GUI) refuse to open the file at all.
         component_entry = f'''  (symbol (lib_id "{lib_id}") (at {x} {y} 0) (unit {unit})
   (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)
   (uuid "{comp_uuid}")
   (property "Reference" "{reference}" (at {x} {y - 5} 0)
     (effects (font (size 1.27 1.27)))
-    (uuid "{uuid.uuid4()}")
   )
   (property "Value" "{value}" (at {x} {y + 2.54} 0)
     (effects (font (size 1.27 1.27)))
-    (uuid "{uuid.uuid4()}")
   )
   (property "Footprint" "{footprint}" (at {x} {y + 5.08} 0)
     (effects (font (size 1.27 1.27)) (hide yes))
-    (uuid "{uuid.uuid4()}")
   )
 {pins_str}
 )'''
