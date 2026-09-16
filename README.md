@@ -242,7 +242,7 @@ Uses `run_erc`, `run_drc`, and `detect_pin_conflicts`.
 
 | Tool | Description |
 |------|-------------|
-| `create_kicad_project` | Create project from KiCad template |
+| `create_kicad_project` | Create an empty project (default) or one from a KiCad template (`template="Arduino_Uno"`) |
 | `add_component_from_library` | Add component with symbol from library |
 | `add_wire` | Add wire connection |
 | `add_label` | Add local label |
@@ -262,12 +262,14 @@ Known limitations:
 
 ## Troubleshooting
 
-### "KiCad template not found"
+### "KiCad template not found" / "KiCad's Python (pcbnew) not found"
 
 Make sure KiCad is installed at the standard path:
 - **Windows**: `C:\Program Files\KiCad\<version>\`
 - **macOS**: `/Applications/KiCad/`
 - **Linux**: `/usr/share/kicad/`
+
+`create_kicad_project` writes empty projects with KiCad's own `pcbnew` module, using KiCad's bundled Python when the server runs under another interpreter. For a non-standard install, set `KICAD_PYTHON` to KiCad's python executable.
 
 ### "kicad-cli not found"
 

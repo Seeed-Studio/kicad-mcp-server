@@ -101,3 +101,14 @@ async def run_kicad_cli(
     keep working.
     """
     return await asyncio.to_thread(run_kicad_cli_sync, args, timeout)
+
+
+async def get_kicad_version() -> str | None:
+    """Return the installed KiCad version (e.g. "10.0.6"), or None if unknown."""
+    try:
+        result = await run_kicad_cli(["version"], timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode(errors="replace").strip() or None
