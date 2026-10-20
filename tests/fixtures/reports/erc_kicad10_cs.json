@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schemas.kicad.org/erc.v1.json",
+  "coordinate_units": "mm",
+  "date": "2026-01-01T00:00:00",
+  "ignored_checks": [],
+  "included_severities": ["error", "warning", "exclusion"],
+  "kicad_version": "10.0.6",
+  "sheets": [
+    {
+      "path": "/",
+      "uuid_path": "/00000000-0000-4000-8000-000000000000",
+      "violations": [
+        {
+          "description": "Pin not connected",
+          "items": [
+            {
+              "description": "Symbol U1 Vývod 3 [SDA, Obousměrný, Čára]",
+              "pos": {"x": 1.016, "y": 0.762},
+              "uuid": "00000000-0000-4000-8000-000000000101"
+            }
+          ],
+          "severity": "error",
+          "type": "pin_not_connected"
+        },
+        {
+          "description": "Footprint 'X' not found in library 'Y'",
+          "items": [
+            {
+              "description": "Symbol U3 [ABC-123]",
+              "pos": {"x": 2.032, "y": 0.508},
+              "uuid": "00000000-0000-4000-8000-000000000105"
+            }
+          ],
+          "severity": "warning",
+          "type": "footprint_link_issues"
+        },
+        {
+          "description": "Label connected to only one pin",
+          "items": [
+            {
+              "description": "Globální označení 'NET_A'",
+              "pos": {"x": 0.508, "y": 0.635},
+              "uuid": "00000000-0000-4000-8000-000000000106"
+            }
+          ],
+          "severity": "warning",
+          "type": "isolated_pin_label"
+        }
+      ]
+    }
+  ],
+  "source": "example.kicad_sch"
+}

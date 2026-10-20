@@ -67,8 +67,8 @@ run_erc("design.kicad_sch")
 run_drc("design.kicad_pcb")
 
 # Export reports
-export_erc_report("design.kicad_sch", "erc_report.txt")
-export_drc_report("design.kicad_pcb", "drc_report.txt")
+export_erc_report("design.kicad_sch", "erc_report.json")
+export_drc_report("design.kicad_pcb", "drc_report.json")
 ```
 
 **Generate Device Tree**
