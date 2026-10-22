@@ -1,18 +1,144 @@
 """Design Rule Checking (DRC) and Electrical Rules Check (ERC) tools for KiCad MCP Server."""
 
+import hashlib
 import json
-import re
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from ..models.types import DRCError, ERCError
+from ..models.types import DRCError, ERCError, ERCItem
+from ..parsers.check_report_parser import (
+    erc_position_scale,
+    parse_drc_report,
+    parse_erc_report,
+)
 from ..server import mcp
-from ..utils.kicad_cli import run_kicad_cli
+from ..utils.kicad_cli import english_env, run_kicad_cli
 
 
 def _temp_dir() -> Path:
     return Path(tempfile.gettempdir())
+
+
+def _report_path(source: Path, kind: str) -> Path:
+    """Deterministic report path in the temp directory for one source file.
+
+    A short digest of the resolved source path is in the name, so two projects
+    with the same file stem do not overwrite each other's reports. The
+    reports are in a subdirectory, so reports from older server versions
+    (different format, localized text) are not used again.
+    """
+    digest = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:8]
+    report_dir = _temp_dir() / "kicad-mcp-server"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / f"{source.stem}_{digest}_{kind}.json"
+
+
+def _schematic_files(sch_path: Path) -> list[Path]:
+    """Return the schematic files of the project of sch_path."""
+    return sorted(sch_path.parent.glob("*.kicad_sch"))
+
+
+def _erc_sources(sch_path: Path) -> list[Path]:
+    """Return the files that change the ERC result."""
+    return _schematic_files(sch_path) + sorted(sch_path.parent.glob("*.kicad_pro"))
+
+
+def _drc_sources(pcb: Path) -> list[Path]:
+    """Return the files that change the DRC result."""
+    return (
+        [pcb]
+        + sorted(pcb.parent.glob("*.kicad_pro"))
+        + sorted(pcb.parent.glob("*.kicad_dru"))
+        + _schematic_files(pcb)
+    )
+
+
+def _report_is_stale(report: Path, sources: list[Path]) -> bool:
+    """Return True if the report is missing or older than one of the sources."""
+    if not report.exists():
+        return True
+    report_mtime = report.stat().st_mtime
+    return any(src.exists() and src.stat().st_mtime > report_mtime for src in sources)
+
+
+def _md(text: str) -> str:
+    """Escape a value for a Markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _erc_item_text(item: ERCItem) -> str:
+    """Give a short text for one ERC item: pin, label or symbol."""
+    if item.pin_number:
+        ref = f"{item.reference}." if item.reference else ""
+        name = f" {item.pin_name}" if item.pin_name else ""
+        pin_type = f" ({item.pin_type})" if item.pin_type else ""
+        return f"{ref}{item.pin_number}{name}{pin_type}"
+    if item.label:
+        return item.description
+    if item.reference:
+        return f"{item.reference} [{item.value}]" if item.value else item.reference
+    return item.description
+
+
+def _position_text(x: float | None, y: float | None) -> str:
+    return f"({x:.2f}, {y:.2f})" if x is not None and y is not None else ""
+
+
+def _join_cells(values: list[str]) -> str:
+    return _md("; ".join(v for v in values if v)) or "-"
+
+
+def _severity_cell(severity: str, excluded: bool) -> str:
+    icon = "❌" if severity == "error" else "⚠️"
+    return f"{icon} {severity} (excluded)" if excluded else f"{icon} {severity}"
+
+
+_ERC_TABLE_HEADER = (
+    "| Severity | Type | Description | Components | Items | Position (mm) |\n"
+    "|----------|------|-------------|------------|-------|---------------|\n"
+)
+
+
+def _erc_row(error: ERCError, description_limit: int | None = None) -> str:
+    """Format one ERC violation as a Markdown table row."""
+    description = error.description[:description_limit] if description_limit else error.description
+    components = ", ".join(dict.fromkeys(error.components)) or "N/A"
+    items = _join_cells([_erc_item_text(i) for i in error.items])
+    positions = _join_cells([_position_text(i.x_mm, i.y_mm) for i in error.items])
+    return (
+        f"| {_severity_cell(error.severity, error.excluded)} | {error.type} "
+        f"| {_md(description)} | {components} | {items} | {positions} |\n"
+    )
+
+
+_DRC_TABLE_HEADER = (
+    "| Severity | Type | Location | Description | Items |\n"
+    "|----------|------|----------|-------------|-------|\n"
+)
+
+
+def _drc_row(error: DRCError, description_limit: int | None = None) -> str:
+    """Format one DRC violation as a Markdown table row."""
+    description = error.description[:description_limit] if description_limit else error.description
+    x, y = error.location
+    items = _join_cells([i.description for i in error.items])
+    return (
+        f"| {_severity_cell(error.severity, error.excluded)} | {error.type} "
+        f"| ({x:.2f}, {y:.2f}) | {_md(description)} | {items} |\n"
+    )
+
+
+def _count_text(errors: list[ERCError] | list[DRCError]) -> str:
+    """Give the error, warning and exclusion counts as Markdown list lines."""
+    active = [e for e in errors if not e.excluded]
+    error_count = sum(1 for e in active if e.severity == "error")
+    warning_count = sum(1 for e in active if e.severity == "warning")
+    text = f"- Errors: {error_count}\n- Warnings: {warning_count}"
+    excluded_count = len(errors) - len(active)
+    if excluded_count:
+        text += f"\n- Excluded: {excluded_count}"
+    return text
 
 
 def _find_root_schematic(sch_path: Path) -> Path | None:
@@ -31,11 +157,16 @@ def _find_root_schematic(sch_path: Path) -> Path | None:
     return None
 
 
-def _parse_erc_report(report_path: Path) -> list[ERCError]:
+def _parse_erc_report(
+    report_path: Path, schematic_files: list[Path] | None = None
+) -> list[ERCError]:
     """Parse ERC report file (JSON or XML format).
 
     Args:
         report_path: Path to ERC report file
+        schematic_files: Schematic files of the project. They are used to
+            find the scale of the report positions (see
+            ``erc_position_scale``).
 
     Returns:
         List of ERC errors/warnings
@@ -45,27 +176,9 @@ def _parse_erc_report(report_path: Path) -> list[ERCError]:
 
     try:
         data = json.loads(content)
-        # KiCad 9+ ERC JSON: violations are a top-level list (there is no
-        # "sheets" key — reading data["sheets"] silently returned []).
-        for v in data.get("violations", []):
-            components = []
-            for item in v.get("items", []):
-                desc = item.get("description", "")
-                # Description looks like "Pin U1 of ...": pull the reference.
-                # Don't gate on the literal English word "Symbol" — localized
-                # KiCad uses other words and the ref would be missed.
-                m = re.search(r"\b(?:Pin|Symbol)\s+([A-Za-z]+\d+)", desc)
-                if m:
-                    components.append(m.group(1))
-            errors.append(
-                ERCError(
-                    severity=v.get("severity", "error"),
-                    type=v.get("type", "unknown"),
-                    description=v.get("description", ""),
-                    components=components,
-                )
-            )
-        return errors
+        # KiCad 8-10 ERC JSON: sheets[].violations (see check_report_parser).
+        scale, _source = erc_position_scale(data, schematic_files or [])
+        return parse_erc_report(data, scale)
     except (json.JSONDecodeError, KeyError):
         pass
 
@@ -118,26 +231,9 @@ def _parse_drc_report(report_path: Path) -> list[DRCError]:
 
     try:
         data = json.loads(content)
-        # KiCad 9+ DRC JSON: violations are a top-level list (no "sheets" key —
-        # reading data["sheets"] returned [] and made run_drc report PASS with
-        # every violation silently dropped).
-        for v in data.get("violations", []):
-            x, y = 0.0, 0.0
-            items = v.get("items", [])
-            if items:
-                pos = items[0].get("pos", {})
-                x = float(pos.get("x", 0))
-                y = float(pos.get("y", 0))
-
-            errors.append(
-                DRCError(
-                    severity=v.get("severity", "error"),
-                    type=v.get("type", "unknown"),
-                    description=v.get("description", ""),
-                    location=(x, y),
-                )
-            )
-        return errors
+        # KiCad 9+ DRC JSON: top-level lists "violations", "unconnected_items"
+        # and "schematic_parity" (no "sheets" key).
+        return parse_drc_report(data)
     except (json.JSONDecodeError, KeyError):
         pass
 
@@ -240,23 +336,29 @@ async def run_erc(
             sch_path = root_sch
 
         # ERC report output path. run_erc redirects sub-sheets to the root
-        # schematic, so the report is named after the ROOT stem — not the
-        # (possibly sub-sheet) input stem, which would never match.
-        root = _find_root_schematic(sch_path) or sch_path
-        erc_report_path = _temp_dir() / (root.stem + "_erc.rpt")
+        # schematic, so the report is named after the ROOT schematic — not
+        # the (possibly sub-sheet) input, which would never match.
+        erc_report_path = _report_path(sch_path, "erc")
+        # Remove the old report: after the run, a report file must be the
+        # result of this run.
+        erc_report_path.unlink(missing_ok=True)
 
-        # Run ERC using kicad-cli (KiCad 7+)
+        # Run ERC using kicad-cli (KiCad 7+). --severity-all also gives the
+        # excluded violations, with "excluded": true. The English locale
+        # makes the item text parsable (pin number, pin name and pin type).
         result = await run_kicad_cli(
             [
                 "sch",
                 "erc",
                 "--format",
                 "json",
+                "--severity-all",
                 "--output",
                 str(erc_report_path),
                 str(sch_path),
             ],
             timeout=60,
+            env=english_env(),
         )
 
         stderr_text = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
@@ -295,27 +397,22 @@ verified. Ensure KiCad 9+ is installed and the schematic has a matching
 
         # Parse and format results
         try:
-            errors = _parse_erc_report(erc_report_path)
+            errors = _parse_erc_report(erc_report_path, _schematic_files(sch_path))
 
-            if not errors:
+            if not any(not e.excluded for e in errors):
+                excluded_note = (
+                    f"\n\n{len(errors)} excluded violation(s) are not counted." if errors else ""
+                )
                 return f"""✅ **ERC Check Passed**
 
 **Schematic:** {schematic_path}
 
-No electrical violations detected!{subsheet_note}"""
-
-            # Count by severity
-            error_count = sum(1 for e in errors if e.severity == "error")
-            warning_count = sum(1 for e in errors if e.severity == "warning")
+No electrical violations detected!{excluded_note}{subsheet_note}"""
 
             # Format violations
-            violations_table = "| Severity | Type | Description | Components |\n"
-            violations_table += "|----------|------|-------------|------------|\n"
-
+            violations_table = _ERC_TABLE_HEADER
             for error in errors[:20]:  # Limit to first 20
-                severity_icon = "❌" if error.severity == "error" else "⚠️"
-                components_str = ", ".join(error.components) if error.components else "N/A"
-                violations_table += f"| {severity_icon} {error.severity} | {error.type} | {error.description[:50]} | {components_str} |\n"
+                violations_table += _erc_row(error, description_limit=50)
 
             if len(errors) > 20:
                 violations_table += f"\n*... and {len(errors) - 20} more violations*\n"
@@ -324,8 +421,7 @@ No electrical violations detected!{subsheet_note}"""
 
 **Schematic:** {schematic_path}
 **Total Violations:** {len(errors)}
-- Errors: {error_count}
-- Warnings: {warning_count}{subsheet_note}
+{_count_text(errors)}{subsheet_note}
 
 ## Violations
 
@@ -414,20 +510,21 @@ async def run_drc(
             return f"❌ **PCB file not found:** {pcb_path}"
 
         # DRC report output path
-        drc_report_path = _temp_dir() / (pcb.stem + "_drc.rpt")
+        drc_report_path = _report_path(pcb, "drc")
+        # Remove the old report: after the run, a report file must be the
+        # result of this run.
+        drc_report_path.unlink(missing_ok=True)
 
-        # Run DRC using kicad-cli (KiCad 7+)
+        # Run DRC using kicad-cli (KiCad 7+). --severity-all also gives the
+        # excluded violations. The schematic parity check is possible only
+        # when the schematic of the board is available.
+        args = ["pcb", "drc", "--format", "json", "--severity-all"]
+        if pcb.with_suffix(".kicad_sch").exists():
+            args.append("--schematic-parity")
         result = await run_kicad_cli(
-            [
-                "pcb",
-                "drc",
-                "--format",
-                "json",
-                "--output",
-                str(drc_report_path),
-                str(pcb),
-            ],
+            args + ["--output", str(drc_report_path), str(pcb)],
             timeout=60,
+            env=english_env(),
         )
 
         stderr_text = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
@@ -454,48 +551,45 @@ async def run_drc(
 
         # Parse DRC report
         if not drc_report_path.exists():
-            # No violations found
-            return f"""✅ **DRC Check Passed**
+            # kicad-cli returned success but wrote no report. Do NOT claim
+            # "passed": no check was verified.
+            return f"""⚠️ **DRC Report Not Generated**
 
 **PCB:** {pcb_path}
 
-No design rule violations detected!
-
-**Checked:**
-- ✅ All clearance requirements met
-- ✅ No spacing violations
-- ✅ All connections routed
-- ✅ No pad/footprint overlaps
-- ✅ Board edge constraints satisfied"""
+kicad-cli exited cleanly but wrote no report file, so no checks could be
+verified. Ensure KiCad 9+ is installed and the board file loads in Pcbnew."""
 
         # Parse and format results
         try:
             errors = _parse_drc_report(drc_report_path)
 
-            if not errors:
+            if not any(not e.excluded for e in errors):
+                excluded_note = (
+                    f"\n\n{len(errors)} excluded violation(s) are not counted." if errors else ""
+                )
                 return f"""✅ **DRC Check Passed**
 
 **PCB:** {pcb_path}
 
-No design rule violations detected!"""
+No design rule violations detected!{excluded_note}"""
 
-            # Count by severity
-            error_count = sum(1 for e in errors if e.severity == "error")
-            warning_count = sum(1 for e in errors if e.severity == "warning")
-
-            # Group by type
-            type_counts = {}
+            # Group by type (excluded violations are not counted)
+            type_counts: dict[str, int] = {}
             for error in errors:
-                type_counts[error.type] = type_counts.get(error.type, 0) + 1
+                if not error.excluded:
+                    type_counts[error.type] = type_counts.get(error.type, 0) + 1
 
-            # Format violations
-            violations_table = "| Severity | Type | Location | Description |\n"
-            violations_table += "|----------|------|----------|-------------|\n"
-
-            for error in errors[:20]:  # Limit to first 20
-                severity_icon = "❌" if error.severity == "error" else "⚠️"
-                x, y = error.location
-                violations_table += f"| {severity_icon} {error.severity} | {error.type} | ({x:.2f}, {y:.2f}) | {error.description[:40]} |\n"
+            # Format violations: the most severe first. Unconnected items and
+            # schematic parity errors are at the end of the report, thus
+            # they could be lost after the 20-row limit.
+            ordered = sorted(
+                errors,
+                key=lambda e: (e.excluded, e.severity != "error", e.category == "violation"),
+            )
+            violations_table = _DRC_TABLE_HEADER
+            for error in ordered[:20]:  # Limit to first 20
+                violations_table += _drc_row(error, description_limit=40)
 
             if len(errors) > 20:
                 violations_table += f"\n*... and {len(errors) - 20} more violations*\n"
@@ -509,8 +603,7 @@ No design rule violations detected!"""
 
 **PCB:** {pcb_path}
 **Total Violations:** {len(errors)}
-- Errors: {error_count}
-- Warnings: {warning_count}
+{_count_text(errors)}
 
 {type_summary}
 ## Violations
@@ -585,19 +678,20 @@ async def get_erc_violations(
             return f"❌ **Schematic file not found:** {schematic_path}"
 
         # ERC report output path. run_erc redirects sub-sheets to the root
-        # schematic, so the report is named after the ROOT stem — not the
-        # (possibly sub-sheet) input stem, which would never match.
+        # schematic, so the report is named after the ROOT schematic — not
+        # the (possibly sub-sheet) input, which would never match.
         root = _find_root_schematic(sch_path) or sch_path
-        erc_report_path = _temp_dir() / (root.stem + "_erc.rpt")
+        erc_report_path = _report_path(root, "erc")
 
-        if not erc_report_path.exists():
-            # Run ERC first
+        if _report_is_stale(erc_report_path, _erc_sources(root)):
+            # Run ERC first. run_erc gives "❌" also when it found violations,
+            # thus only a missing report is a failure.
             initial_result = await run_erc(schematic_path)
-            if "❌" in initial_result or "⚠️" in initial_result:
+            if not erc_report_path.exists():
                 return initial_result
 
         # Parse ERC report
-        errors = _parse_erc_report(erc_report_path)
+        errors = _parse_erc_report(erc_report_path, _schematic_files(root))
 
         if not errors:
             return f"""✅ **No ERC Violations**
@@ -626,14 +720,10 @@ No violations match the specified filter."""
 
 ## Violations
 
-| Severity | Type | Description | Components |
-|----------|------|-------------|------------|
-"""
+{_ERC_TABLE_HEADER}"""
 
         for error in filtered_errors:
-            severity_icon = "❌" if error.severity == "error" else "⚠️"
-            components_str = ", ".join(error.components) if error.components else "N/A"
-            result += f"| {severity_icon} {error.severity} | {error.type} | {error.description} | {components_str} |\n"
+            result += _erc_row(error)
 
         return result
 
@@ -672,12 +762,13 @@ async def get_drc_violations(
             return f"❌ **PCB file not found:** {pcb_path}"
 
         # DRC report output path
-        drc_report_path = _temp_dir() / (pcb.stem + "_drc.rpt")
+        drc_report_path = _report_path(pcb, "drc")
 
-        if not drc_report_path.exists():
-            # Run DRC first
+        if _report_is_stale(drc_report_path, _drc_sources(pcb)):
+            # Run DRC first. run_drc gives "❌" also when it found violations,
+            # thus only a missing report is a failure.
             initial_result = await run_drc(pcb_path)
-            if "❌" in initial_result or "⚠️" in initial_result:
+            if not drc_report_path.exists():
                 return initial_result
 
         # Parse DRC report
@@ -710,14 +801,10 @@ No violations match the specified filter."""
 
 ## Violations
 
-| Severity | Type | Location | Description |
-|----------|------|----------|-------------|
-"""
+{_DRC_TABLE_HEADER}"""
 
         for error in filtered_errors:
-            severity_icon = "❌" if error.severity == "error" else "⚠️"
-            x, y = error.location
-            result += f"| {severity_icon} {error.severity} | {error.type} | ({x:.2f}, {y:.2f}) | {error.description} |\n"
+            result += _drc_row(error)
 
         return result
 
@@ -743,9 +830,11 @@ async def export_erc_report(
 ) -> str:
     """Export ERC report to file.
 
+    The report is the kicad-cli ERC JSON report.
+
     Args:
         schematic_path: Path to .kicad_sch file
-        output_path: Optional output file path (default: schematic_name_erc.txt)
+        output_path: Optional output file path (default: schematic_name_erc_report.json)
 
     Returns:
         Confirmation with output file location
@@ -755,21 +844,20 @@ async def export_erc_report(
         if not sch_path.exists():
             return f"❌ **Schematic file not found:** {schematic_path}"
 
-        # Run ERC first to generate report
+        # ERC report path. run_erc writes the report of the root schematic.
+        root = _find_root_schematic(sch_path) or sch_path
+        erc_report_path = _report_path(root, "erc")
+
+        # Run ERC first to generate a current report. run_erc gives "❌" also
+        # when it found violations, thus only a missing report is a failure.
         initial_result = await run_erc(schematic_path)
 
-        if "❌" in initial_result:
-            return f"❌ **ERC Check Failed**\n\n{initial_result}"
-
-        # ERC report path
-        erc_report_path = _temp_dir() / (sch_path.stem + "_erc.rpt")
-
         if not erc_report_path.exists():
-            return "❌ **ERC report not found.** Run ERC check first."
+            return f"❌ **ERC Check Failed**\n\n{initial_result}"
 
         # Determine output path
         if not output_path:
-            output_path = str(sch_path.parent / (sch_path.stem + "_erc_report.txt"))
+            output_path = str(sch_path.parent / (sch_path.stem + "_erc_report.json"))
 
         output = Path(output_path)
 
@@ -808,9 +896,11 @@ async def export_drc_report(
 ) -> str:
     """Export DRC report to file.
 
+    The report is the kicad-cli DRC JSON report.
+
     Args:
         pcb_path: Path to .kicad_pcb file
-        output_path: Optional output file path (default: pcb_name_drc.txt)
+        output_path: Optional output file path (default: pcb_name_drc_report.json)
 
     Returns:
         Confirmation with output file location
@@ -820,21 +910,18 @@ async def export_drc_report(
         if not pcb.exists():
             return f"❌ **PCB file not found:** {pcb_path}"
 
-        # Run DRC first to generate report
+        drc_report_path = _report_path(pcb, "drc")
+
+        # Run DRC first to generate a current report. run_drc gives "❌" also
+        # when it found violations, thus only a missing report is a failure.
         initial_result = await run_drc(pcb_path)
 
-        if "❌" in initial_result:
-            return f"❌ **DRC Check Failed**\n\n{initial_result}"
-
-        # DRC report path
-        drc_report_path = _temp_dir() / (pcb.stem + "_drc.rpt")
-
         if not drc_report_path.exists():
-            return "❌ **DRC report not found.** Run DRC check first."
+            return f"❌ **DRC Check Failed**\n\n{initial_result}"
 
         # Determine output path
         if not output_path:
-            output_path = str(pcb.parent / (pcb.stem + "_drc_report.txt"))
+            output_path = str(pcb.parent / (pcb.stem + "_drc_report.json"))
 
         output = Path(output_path)
 

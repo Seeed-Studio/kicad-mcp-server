@@ -69,6 +69,21 @@ class PCBStatistics(BaseModel):
     layers: int = Field(description="Number of copper layers")
 
 
+class ERCItem(BaseModel):
+    """One item of an ERC violation (a pin, a symbol, a label or other object)."""
+
+    description: str = Field(default="", description="Item text from kicad-cli")
+    reference: str = Field(default="", description="Symbol reference (e.g., U13)")
+    pin_number: str = Field(default="", description="Pin number")
+    pin_name: str = Field(default="", description="Pin name")
+    pin_type: str = Field(default="", description="Pin electrical type")
+    value: str = Field(default="", description="Symbol value, for a symbol item")
+    label: str = Field(default="", description="Label, net or sheet pin text")
+    x_mm: float | None = Field(default=None, description="X position in mm")
+    y_mm: float | None = Field(default=None, description="Y position in mm")
+    uuid: str = Field(default="", description="KiCad UUID of the item")
+
+
 class ERCError(BaseModel):
     """Electrical Rules Check error."""
 
@@ -76,6 +91,20 @@ class ERCError(BaseModel):
     type: str = Field(description="Error type")
     description: str = Field(description="Error description")
     components: list[str] = Field(default_factory=list, description="Involved components")
+    items: list[ERCItem] = Field(default_factory=list, description="Items of the violation")
+    excluded: bool = Field(default=False, description="True if the violation is excluded")
+    comment: str = Field(default="", description="Exclusion comment")
+    sheet: str = Field(default="", description="Sheet path (e.g., /Power/)")
+
+
+class DRCItem(BaseModel):
+    """One item of a DRC violation (a pad, a track, a via, a zone or other object)."""
+
+    description: str = Field(default="", description="Item text from kicad-cli")
+    reference: str = Field(default="", description="Footprint reference (e.g., U7)")
+    x_mm: float | None = Field(default=None, description="X position in mm")
+    y_mm: float | None = Field(default=None, description="Y position in mm")
+    uuid: str = Field(default="", description="KiCad UUID of the item")
 
 
 class DRCError(BaseModel):
@@ -85,3 +114,11 @@ class DRCError(BaseModel):
     type: str = Field(description="Error type")
     description: str = Field(description="Error description")
     location: tuple[float, float] = Field(description="X, Y coordinates")
+    category: str = Field(
+        default="violation",
+        description="Report list: violation, unconnected or schematic_parity",
+    )
+    components: list[str] = Field(default_factory=list, description="Involved footprints")
+    items: list[DRCItem] = Field(default_factory=list, description="Items of the violation")
+    excluded: bool = Field(default=False, description="True if the violation is excluded")
+    comment: str = Field(default="", description="Exclusion comment")

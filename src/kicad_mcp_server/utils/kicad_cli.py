@@ -72,11 +72,27 @@ def find_kicad_cli() -> str | None:
     return None
 
 
+def english_env() -> dict[str, str]:
+    """Return environment overrides that make kicad-cli write English text.
+
+    kicad-cli writes report text (for example the ERC item "Symbol U1 Pin 3
+    [...]") in the language of the system locale. The report parsers need
+    English text. ``LANG`` is necessary: ``LC_ALL`` alone does not change the
+    kicad-cli language. On Windows and macOS these variables can have no
+    effect. The parsers then fall back to language-neutral rules.
+    """
+    return {"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "LANGUAGE": ""}
+
+
 def run_kicad_cli_sync(
     args: list[str],
     timeout: float = 60.0,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run kicad-cli synchronously (blocking).
+
+    ``env`` holds environment overrides. They are added to the environment of
+    the server process.
 
     Raises FileNotFoundError when kicad-cli cannot be located, so callers can
     distinguish "KiCad not installed" from a failed run.
@@ -87,12 +103,14 @@ def run_kicad_cli_sync(
             "kicad-cli not found in PATH or known KiCad install locations. "
             "Install KiCad 7+ or set the KICAD_CLI environment variable."
         )
-    return subprocess.run([exe] + args, capture_output=True, timeout=timeout)
+    full_env = {**os.environ, **env} if env else None
+    return subprocess.run([exe] + args, capture_output=True, timeout=timeout, env=full_env)
 
 
 async def run_kicad_cli(
     args: list[str],
     timeout: float = 60.0,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run kicad-cli off the event loop (non-blocking for the server).
 
@@ -100,7 +118,7 @@ async def run_kicad_cli(
     as the sync variant, so existing ``except FileNotFoundError`` handlers
     keep working.
     """
-    return await asyncio.to_thread(run_kicad_cli_sync, args, timeout)
+    return await asyncio.to_thread(run_kicad_cli_sync, args, timeout, env)
 
 
 async def get_kicad_version() -> str | None:

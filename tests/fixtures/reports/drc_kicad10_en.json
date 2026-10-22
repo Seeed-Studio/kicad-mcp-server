@@ -1,0 +1,109 @@
+{
+  "$schema": "https://schemas.kicad.org/drc.v1.json",
+  "coordinate_units": "mm",
+  "date": "2026-01-01T00:00:00",
+  "ignored_checks": [],
+  "included_severities": ["error", "warning", "exclusion"],
+  "kicad_version": "10.0.6",
+  "schematic_parity": [
+    {
+      "description": "Missing footprint U9",
+      "items": [
+        {
+          "description": "Symbol U9 [ABC]",
+          "pos": {"x": 0.0, "y": 0.0},
+          "uuid": "00000000-0000-4000-8000-000000000201"
+        }
+      ],
+      "severity": "warning",
+      "type": "missing_footprint"
+    }
+  ],
+  "source": "example.kicad_pcb",
+  "unconnected_items": [
+    {
+      "description": "Missing connection between items",
+      "items": [
+        {
+          "description": "Pad 3 [NET_B] of U1 on F.Cu",
+          "pos": {"x": 97.18, "y": 61.8},
+          "uuid": "00000000-0000-4000-8000-000000000202"
+        },
+        {
+          "description": "PTH pad 2 [NET_B] of J1",
+          "pos": {"x": 98.65, "y": 53.37},
+          "uuid": "00000000-0000-4000-8000-000000000203"
+        }
+      ],
+      "severity": "error",
+      "type": "unconnected_items"
+    }
+  ],
+  "violations": [
+    {
+      "description": "Items shorting two nets (nets NET_C and GND)",
+      "items": [
+        {
+          "description": "Pad 10 [NET_C] of U1 on F.Cu",
+          "pos": {"x": 97.18, "y": 65.3},
+          "uuid": "00000000-0000-4000-8000-000000000204"
+        },
+        {
+          "description": "Via [GND] on F.Cu - B.Cu",
+          "pos": {"x": 97.18, "y": 65.3},
+          "uuid": "00000000-0000-4000-8000-000000000205"
+        }
+      ],
+      "severity": "error",
+      "type": "shorting_items"
+    },
+    {
+      "description": "Courtyards overlap",
+      "items": [
+        {
+          "description": "Footprint L4",
+          "pos": {"x": 110.51, "y": 62.76},
+          "uuid": "00000000-0000-4000-8000-000000000206"
+        },
+        {
+          "description": "Footprint C18",
+          "pos": {"x": 111.38, "y": 63.63},
+          "uuid": "00000000-0000-4000-8000-000000000207"
+        }
+      ],
+      "severity": "error",
+      "type": "courtyards_overlap"
+    },
+    {
+      "description": "Clearance violation (clearance 0.1600 mm; actual 0.1595 mm)",
+      "items": [
+        {
+          "description": "Pad 1 [D[3] of BUS] of L6 on B.Cu",
+          "pos": {"x": 110.655, "y": 68.9},
+          "uuid": "00000000-0000-4000-8000-000000000208"
+        },
+        {
+          "description": "Track [GND] on In1.Cu, length 0.5520 mm",
+          "pos": {"x": 110.37, "y": 69.41},
+          "uuid": "00000000-0000-4000-8000-000000000209"
+        }
+      ],
+      "severity": "error",
+      "type": "clearance"
+    },
+    {
+      "comment": "Accepted for the prototype",
+      "description": "Text height out of range",
+      "excluded": true,
+      "items": [
+        {
+          "description": "Reference field of L4",
+          "pos": {"x": 110.93, "y": 62.16},
+          "uuid": "00000000-0000-4000-8000-000000000210"
+        }
+      ],
+      "severity": "warning",
+      "type": "text_height"
+    }
+  ]
+}

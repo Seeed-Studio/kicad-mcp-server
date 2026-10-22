@@ -1,0 +1,126 @@
+{
+  "$schema": "https://schemas.kicad.org/erc.v1.json",
+  "coordinate_units": "mm",
+  "date": "2026-01-01T00:00:00",
+  "ignored_checks": [],
+  "included_severities": ["error", "warning", "exclusion"],
+  "kicad_version": "10.0.6",
+  "sheets": [
+    {
+      "path": "/",
+      "uuid_path": "/00000000-0000-4000-8000-000000000000",
+      "violations": [
+        {
+          "description": "Pin not connected",
+          "items": [
+            {
+              "description": "Symbol U1 Pin 3 [SDA, Bidirectional, Line]",
+              "pos": {"x": 1.016, "y": 0.762},
+              "uuid": "00000000-0000-4000-8000-000000000101"
+            }
+          ],
+          "severity": "error",
+          "type": "pin_not_connected"
+        },
+        {
+          "description": "Input Power pin not driven by any Output Power pins",
+          "items": [
+            {
+              "description": "Symbol #PWR01 Pin 1 [Power input, Line]",
+              "pos": {"x": 0.508, "y": 0.254},
+              "uuid": "00000000-0000-4000-8000-000000000102"
+            }
+          ],
+          "severity": "error",
+          "type": "power_pin_not_driven"
+        },
+        {
+          "description": "Pin not connected",
+          "items": [
+            {
+              "description": "Symbol U2 Pin A1 [IN, OUT, Bidirectional, Line]",
+              "pos": {"x": 1.27, "y": 1.27},
+              "uuid": "00000000-0000-4000-8000-000000000103"
+            }
+          ],
+          "severity": "error",
+          "type": "pin_not_connected"
+        },
+        {
+          "description": "Pin not connected",
+          "items": [
+            {
+              "description": "Pin 1 [???, ?]",
+              "pos": {"x": 1.0, "y": 1.0},
+              "uuid": "00000000-0000-4000-8000-000000000104"
+            }
+          ],
+          "severity": "error",
+          "type": "pin_not_connected"
+        },
+        {
+          "description": "Footprint 'X' not found in library 'Y'",
+          "items": [
+            {
+              "description": "Symbol U3 [ABC-123]",
+              "pos": {"x": 2.032, "y": 0.508},
+              "uuid": "00000000-0000-4000-8000-000000000105"
+            }
+          ],
+          "severity": "warning",
+          "type": "footprint_link_issues"
+        },
+        {
+          "description": "Label connected to only one pin",
+          "items": [
+            {
+              "description": "Global Label 'NET_A'",
+              "pos": {"x": 0.508, "y": 0.635},
+              "uuid": "00000000-0000-4000-8000-000000000106"
+            }
+          ],
+          "severity": "warning",
+          "type": "isolated_pin_label"
+        },
+        {
+          "comment": "Not used in this variant",
+          "description": "Pin not connected",
+          "excluded": true,
+          "items": [
+            {
+              "description": "Symbol U1 Pin 4 [SCL, Input, Line]",
+              "pos": {"x": 1.016, "y": 0.889},
+              "uuid": "00000000-0000-4000-8000-000000000107"
+            }
+          ],
+          "severity": "error",
+          "type": "pin_not_connected"
+        }
+      ]
+    },
+    {
+      "path": "/Power/",
+      "uuid_path": "/00000000-0000-4000-8000-000000000000/00000000-0000-4000-8000-000000000001",
+      "violations": [
+        {
+          "description": "Pins of type Power output and Power output are connected",
+          "items": [
+            {
+              "description": "Symbol U4 Pin 5 [VOUT, Power output, Line]",
+              "pos": {"x": 1.524, "y": 1.016},
+              "uuid": "00000000-0000-4000-8000-000000000108"
+            },
+            {
+              "description": "Symbol U5 Pin 2 [VOUT, Power output, Line]",
+              "pos": {"x": 1.778, "y": 1.016},
+              "uuid": "00000000-0000-4000-8000-000000000109"
+            }
+          ],
+          "severity": "error",
+          "type": "pin_to_pin"
+        }
+      ]
+    }
+  ],
+  "source": "example.kicad_sch"
+}

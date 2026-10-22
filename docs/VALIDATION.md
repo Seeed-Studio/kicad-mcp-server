@@ -33,9 +33,31 @@ else:
 - ✅ Pass: No violations detected
 - ❌ Fail: List of violations with severity and descriptions
 
+Each violation row has these columns:
+
+| Column | Content |
+|---|---|
+| Severity | `error` or `warning`. An excluded violation has the mark `(excluded)`. |
+| Type | The ERC check, for example `pin_not_connected` |
+| Description | The kicad-cli text of the violation |
+| Components | The symbol references |
+| Items | Each pin as `REF.PIN name (type)`, each label as its text, each symbol as `REF [value]` |
+| Position (mm) | The position of each item on the sheet |
+
+The tool runs kicad-cli with an English locale, because the parser needs the
+English item text. The error and warning counts do not include the excluded
+violations.
+
+KiCad 10.0.6 writes the ERC JSON positions 100 times too small. The tool finds
+the correct scale: it compares the report positions with the positions of the
+same objects in the schematic files.
+
 #### `get_erc_violations(schematic_path: str, severity: str = "") -> str`
 
-Get filtered ERC violations by severity.
+Get filtered ERC violations by severity. The table has the same columns as the
+table of `run_erc`, and it has all violations, not only the first 20. If the
+schematic or the project file is newer than the last report, the tool runs ERC
+again.
 
 **Parameters:**
 - `severity`: "error", "warning", or "" for all
@@ -61,6 +83,12 @@ Run Design Rules Check on a PCB file.
 - Missing connections (unrouted nets)
 - Pad/footprint overlaps
 - Board edge constraints
+- Schematic parity, if the schematic with the same name is in the board directory
+
+The result has the violations, the unconnected items and the schematic parity
+errors of the kicad-cli report. The table shows the unconnected items and the
+parity errors first. The Items column gives the text of each item, for example
+`Pad 10 [VBAT] of U7 on F.Cu`.
 
 **Example:**
 ```python
@@ -93,12 +121,14 @@ all_violations = get_drc_violations("board.kicad_pcb")
 #### `export_erc_report(schematic_path: str, output_path: str = "") -> str`
 #### `export_drc_report(pcb_path: str, output_path: str = "") -> str`
 
-Export validation reports to files for documentation.
+Export validation reports to files for documentation. The tools run the check
+again and copy the kicad-cli JSON report. The default output file is
+`<name>_erc_report.json` or `<name>_drc_report.json` next to the source file.
 
 **Example:**
 ```python
-export_erc_report("board.kicad_sch", "reports/erc_report.txt")
-export_drc_report("board.kicad_pcb", "reports/drc_report.txt")
+export_erc_report("board.kicad_sch", "reports/erc_report.json")
+export_drc_report("board.kicad_pcb", "reports/drc_report.json")
 ```
 
 ## Usage Patterns
@@ -117,8 +147,8 @@ drc_result = run_drc("board.kicad_pcb")
 assert "X" not in drc_result, "Fix DRC violations first"
 
 # 3. Export reports for documentation
-export_erc_report("board.kicad_sch", "manufacturing/erc.txt")
-export_drc_report("board.kicad_pcb", "manufacturing/drc.txt")
+export_erc_report("board.kicad_sch", "manufacturing/erc.json")
+export_drc_report("board.kicad_pcb", "manufacturing/drc.json")
 
 print("OK Design ready for manufacturing")
 ```
