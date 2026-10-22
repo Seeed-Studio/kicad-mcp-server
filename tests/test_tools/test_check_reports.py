@@ -214,7 +214,10 @@ class TestKicadCliIntegration:
         shutil.copy(LABEL_SCH, sch)
         out = await validation.run_erc(str(sch))
         assert "label_dangling" in out
-        assert "Global Label 'NET_A'" in out
+        # kicad-cli localizes the item text ("Global Label" on English
+        # systems, e.g. "全局标签" on Chinese Windows — LANG overrides have
+        # no effect there), so only the quoted label text is stable
+        assert "'NET_A'" in out
         assert "(50.80, 63.50)" in out
 
     async def test_get_erc_violations_gives_table_not_run_summary(self, tmp_path):
