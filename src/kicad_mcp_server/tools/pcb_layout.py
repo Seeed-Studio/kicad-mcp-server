@@ -29,6 +29,7 @@ async def setup_pcb_layout(
     width: float = 100.0,
     height: float = 100.0,
     unit: str = "mm",
+    overwrite: bool = False,
 ) -> str:
     """Initialize an empty PCB with the specified board outline dimensions.
 
@@ -37,12 +38,18 @@ async def setup_pcb_layout(
     no footprints, tracks or nets. KiCad stores .kicad_pcb coordinates in
     millimetres (plain decimals), so dimensions are emitted directly in mm.
 
+    When the .kicad_pcb file exists, the tool does not write it and returns
+    an error. A new board removes all footprints, tracks and zones of the
+    existing board. Ask the user before you set overwrite=True.
+
     Args:
         schematic_path: Path to the .kicad_sch the board is based on (used to
             derive the .kicad_pcb path and board title).
         width: Board width in the given unit.
         height: Board height in the given unit.
         unit: "mm" (default) or "mil".
+        overwrite: Replace an existing .kicad_pcb file. Set it only after
+            the user agreed to lose the existing board.
 
     Returns:
         Confirmation reporting the actual outline size, layer count and
@@ -54,6 +61,14 @@ async def setup_pcb_layout(
             return f"❌ Schematic file not found: {schematic_path}"
 
         pcb_path = sch_path.with_suffix(".kicad_pcb")
+        if pcb_path.exists() and not overwrite:
+            return (
+                f"Error: The board file {pcb_path} exists. This tool writes a new, "
+                "empty board, which removes all footprints, tracks and zones of the "
+                "existing board. Thus the tool did not write the file.\n\n"
+                "Ask the user if the existing board can be replaced. Only when the "
+                "user agrees, do this operation again with overwrite=True."
+            )
 
         # KiCad .kicad_pcb coordinates are millimetres (plain decimals), NOT
         # nanometres — multiplying by 1e6 wrote ~100 km outlines (issue #17).

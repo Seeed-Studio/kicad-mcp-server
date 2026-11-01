@@ -246,7 +246,7 @@ Uses `run_erc`, `run_drc`, and `detect_pin_conflicts`.
 | `add_component_from_library` | Add component with symbol from library |
 | `add_wire` | Add wire connection |
 | `add_label` | Add local label |
-| `setup_pcb_layout` | Initialize PCB with dimensions |
+| `setup_pcb_layout` | Initialize PCB with dimensions (does not replace an existing board without `overwrite=True`) |
 | `export_gerber` | Export Gerber files |
 
 ## Editing Limitations
