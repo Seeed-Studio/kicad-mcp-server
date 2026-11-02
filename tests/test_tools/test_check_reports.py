@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,8 @@ from kicad_mcp_server.parsers.check_report_parser import (
 )
 from kicad_mcp_server.tools import validation
 from kicad_mcp_server.utils.kicad_cli import find_kicad_cli
+
+from .locale_env import can_name, non_utf8_env, run_python
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 REPORTS = FIXTURES / "reports"
@@ -234,3 +237,29 @@ class TestKicadCliIntegration:
         assert "Exported" in out
         exported = tmp_path / "dangling_label_erc_report.json"
         assert json.loads(exported.read_text(encoding="utf-8"))["sheets"]
+
+    @pytest.mark.parametrize("utf8_mode", [False, True])
+    def test_run_erc_in_a_locale_that_is_not_utf8(self, tmp_path, utf8_mode):
+        # The server runs in a locale that is not UTF-8, and the project path
+        # holds characters of that locale. kicad-cli must load the file and
+        # write English text.
+        env, encoding = non_utf8_env()
+        names = [
+            name for name in ["电源板", "لوحة", "řídicí"] if can_name(name, encoding, utf8_mode)
+        ]
+        assert names, encoding
+        code = (
+            "import asyncio, shutil\n"
+            "from pathlib import Path\n"
+            "from kicad_mcp_server.tools import validation\n"
+            "directory = Path(ARGS[0]) / ARGS[1]\n"
+            "directory.mkdir()\n"
+            "sch = directory / (ARGS[1] + '.kicad_sch')\n"
+            "shutil.copy(ARGS[2], sch)\n"
+            "result(asyncio.run(validation.run_erc(str(sch))))\n"
+        )
+        out = run_python(code, env, utf8_mode, str(tmp_path), names[0], str(LABEL_SCH))
+        assert "label_dangling" in out, out
+        assert "'NET_A'" in out
+        if sys.platform.startswith("linux"):
+            assert "Global Label 'NET_A'" in out

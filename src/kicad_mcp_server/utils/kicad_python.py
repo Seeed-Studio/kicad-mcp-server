@@ -17,6 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .kicad_cli import fs_encoding
 from .kicad_version import find_kicad_install
 
 _cached_python: str | None = None
@@ -88,7 +89,32 @@ def run_kicad_python_sync(
         capture_output=True,
         stdin=subprocess.DEVNULL,
         timeout=timeout,
+        env=_child_env(),
     )
+
+
+def _child_env() -> dict[str, str]:
+    """Return the environment of the child Python.
+
+    The child writes its stdout and stderr as UTF-8 (see decode_python_output()).
+    On Linux and macOS it must also decode its arguments with the encoding
+    that this process uses for them (fs_encoding()). When that encoding is
+    UTF-8, the UTF-8 mode of Python does the two. Else the child keeps the
+    locale encoding of this process for its arguments, and PYTHONIOENCODING
+    sets only stdout and stderr. The UTF-8 mode is then off explicitly,
+    because it is the default from Python 3.15 (PEP 686). On Windows the
+    arguments are Unicode. PYTHONIOENCODING is set in the two cases, because
+    a value from the environment of this process overrides the UTF-8 mode.
+    """
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1" if fs_encoding() == "utf-8" else "0"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def decode_python_output(data: bytes | None) -> str:
+    """Decode the stdout or the stderr of the child Python (UTF-8)."""
+    return (data or b"").decode("utf-8", errors="replace")
 
 
 async def run_kicad_python(

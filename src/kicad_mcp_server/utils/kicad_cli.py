@@ -17,9 +17,13 @@ non-async contexts.
 """
 
 import asyncio
+import codecs
+import functools
+import locale
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .kicad_version import find_kicad_install
@@ -72,27 +76,131 @@ def find_kicad_cli() -> str | None:
     return None
 
 
-def english_env() -> dict[str, str]:
-    """Return environment overrides that make kicad-cli write English text.
+def _codec(name: str) -> str | None:
+    try:
+        return codecs.lookup(name).name
+    except LookupError:
+        return None
 
-    kicad-cli writes report text (for example the ERC item "Symbol U1 Pin 3
-    [...]") in the language of the system locale. The report parsers need
-    English text. ``LANG`` is necessary: ``LC_ALL`` alone does not change the
-    kicad-cli language. On Windows and macOS these variables can have no
-    effect. The parsers then fall back to language-neutral rules.
+
+def fs_encoding() -> str:
+    """Return the encoding that this process uses for file names and arguments.
+
+    It is the locale encoding, or UTF-8 in the UTF-8 mode of Python (the
+    default from Python 3.15, PEP 686) and on macOS.
     """
-    return {"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "LANGUAGE": ""}
+    return _codec(sys.getfilesystemencoding()) or "utf-8"
+
+
+_LOCALE_PROBE = "import locale, sys; locale.setlocale(locale.LC_CTYPE, sys.argv[1])"
+
+
+@functools.cache
+def _locale_exists(name: str) -> bool:
+    # A probe in a child process: setlocale() in this process is not safe
+    # while other threads run. A probe that cannot run counts as a locale
+    # that does not exist.
+    if not sys.executable:
+        return False
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-I", "-c", _LOCALE_PROBE, name], capture_output=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
+
+
+@functools.cache
+def child_ctype() -> str | None:
+    """Return the LC_CTYPE that kicad-cli gets on Linux and macOS, or None.
+
+    kicad-cli decodes its arguments (the file paths) and encodes its output
+    with the character set of LC_CTYPE. This process encodes the paths with
+    fs_encoding(), thus the character set must be the same. The LC_CTYPE of
+    this process has it, except in the UTF-8 mode of Python with a locale
+    that is not UTF-8 (for example zh_CN.GBK), and on macOS in the C locale.
+    Then the function takes a UTF-8 locale that exists. If no UTF-8 locale
+    exists, it gives None (see run_kicad_cli_sync()).
+    """
+    current = locale.setlocale(locale.LC_CTYPE)
+    encoding = fs_encoding()
+    if encoding != "utf-8" or _codec(locale.nl_langinfo(locale.CODESET)) == encoding:
+        return current
+    language = current.split(".")[0].split("@")[0]
+    for name in (f"{language}.UTF-8", "C.UTF-8", "C.utf8", "en_US.UTF-8", "UTF-8"):
+        if _locale_exists(name):
+            return name
+    return None
+
+
+def kicad_cli_env(english: bool = False) -> dict[str, str] | None:
+    """Return the environment for kicad-cli, or None for the environment of
+    this process.
+
+    With ``english``, kicad-cli writes report text (for example the ERC item
+    "Symbol U1 Pin 3 [...]") in English, which the report parsers need.
+    KiCad takes its language from LC_ALL, LC_MESSAGES, LANGUAGE and LANG,
+    thus the function removes all LC_ variables of the user and sets LANG
+    to "C", which each system has. This also keeps a decimal comma of the
+    user (LC_NUMERIC) out of the report. On Windows and macOS these variables
+    can have no effect. The parsers then fall back to language-neutral rules.
+
+    LC_CTYPE is child_ctype(). A locale that does not exist (for example
+    "C.UTF-8" on macOS or on an old Linux) would put kicad-cli in the "C"
+    locale, and it would not load a file whose path is not ASCII.
+
+    On Windows kicad-cli uses the UTF-8 code page from its manifest
+    (activeCodePage, KiCad 6 and later) and Unicode arguments, thus its
+    environment does not change.
+    """
+    if sys.platform == "win32":
+        return None
+    current = locale.setlocale(locale.LC_CTYPE)
+    # Without a locale of the correct character set, ASCII text stays
+    # correct (run_kicad_cli_sync() refuses other text).
+    ctype = child_ctype() or current
+    env = dict(os.environ)
+    if english:
+        env = {name: value for name, value in env.items() if not name.startswith("LC_")}
+        env.update(LANG="C", LANGUAGE="", LC_CTYPE=ctype)
+    elif ctype != current:
+        if "LC_ALL" in env:
+            # LC_ALL overrides LC_CTYPE. Its value stays the locale of the
+            # other categories.
+            lc_all = env.pop("LC_ALL")
+            env = {name: value for name, value in env.items() if not name.startswith("LC_")}
+            env["LANG"] = lc_all
+        env["LC_CTYPE"] = ctype
+    else:
+        return None
+    return env
+
+
+def decode_output(data: bytes | None) -> str:
+    """Decode the stdout or the stderr of kicad-cli.
+
+    kicad-cli writes with the character set of its LC_CTYPE, which is
+    fs_encoding() (see kicad_cli_env()). On Windows it writes UTF-8.
+    """
+    if not data:
+        return ""
+    encoding = "utf-8" if sys.platform == "win32" else fs_encoding()
+    return data.decode(encoding, errors="replace")
 
 
 def run_kicad_cli_sync(
     args: list[str],
     timeout: float = 60.0,
-    env: dict[str, str] | None = None,
+    english: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run kicad-cli synchronously (blocking).
 
-    ``env`` holds environment overrides. They are added to the environment of
-    the server process.
+    ``english`` makes kicad-cli write English report text (see
+    kicad_cli_env()).
+
+    Raises RuntimeError when an argument is not ASCII and no locale lets
+    kicad-cli decode it as this process encodes it (see child_ctype()).
 
     Raises FileNotFoundError when kicad-cli cannot be located, so callers can
     distinguish "KiCad not installed" from a failed run.
@@ -103,14 +211,22 @@ def run_kicad_cli_sync(
             "kicad-cli not found in PATH or known KiCad install locations. "
             "Install KiCad 7+ or set the KICAD_CLI environment variable."
         )
-    full_env = {**os.environ, **env} if env else None
-    return subprocess.run([exe] + args, capture_output=True, timeout=timeout, env=full_env)
+    if sys.platform != "win32" and child_ctype() is None and not all(a.isascii() for a in args):
+        raise RuntimeError(
+            "kicad-cli cannot read a file path that is not ASCII on this system. "
+            "This server writes file paths as UTF-8 (the UTF-8 mode of Python), but "
+            "the system has no UTF-8 locale for kicad-cli. Install a UTF-8 locale "
+            "(for example C.UTF-8), or start the server with PYTHONUTF8=0."
+        )
+    return subprocess.run(
+        [exe] + args, capture_output=True, timeout=timeout, env=kicad_cli_env(english)
+    )
 
 
 async def run_kicad_cli(
     args: list[str],
     timeout: float = 60.0,
-    env: dict[str, str] | None = None,
+    english: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run kicad-cli off the event loop (non-blocking for the server).
 
@@ -118,7 +234,7 @@ async def run_kicad_cli(
     as the sync variant, so existing ``except FileNotFoundError`` handlers
     keep working.
     """
-    return await asyncio.to_thread(run_kicad_cli_sync, args, timeout, env)
+    return await asyncio.to_thread(run_kicad_cli_sync, args, timeout, english)
 
 
 async def get_kicad_version() -> str | None:
@@ -129,4 +245,4 @@ async def get_kicad_version() -> str | None:
         return None
     if result.returncode != 0:
         return None
-    return result.stdout.decode(errors="replace").strip() or None
+    return decode_output(result.stdout).strip() or None

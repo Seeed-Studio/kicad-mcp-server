@@ -30,7 +30,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package with test extras
         run: python -m pip install -e ".[test]"
+      # The character set tests run the tools in a locale that is not UTF-8
+      # (tests/test_tools/locale_env.py). Windows runners use the code page
+      # cp1252 for this. Linux runners need such a locale.
+      - name: Generate a locale that is not UTF-8
+        if: runner.os == 'Linux'
+        run: sudo localedef -i zh_CN -f GBK zh_CN.GBK
       - name: Run tests
         run: python -m pytest tests/ -q
+        env:
+          # A missing locale fails the character set tests, not skips them.
+          KICAD_MCP_TEST_REQUIRE_LOCALE: "1"
         # Parser/hierarchy tests need no KiCad install; the kicad-cli
         # integration test self-skips when KiCad is absent.

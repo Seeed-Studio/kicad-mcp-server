@@ -15,6 +15,8 @@ from kicad_mcp_server.utils import kicad_python
 from kicad_mcp_server.utils.kicad_cli import find_kicad_cli
 from kicad_mcp_server.utils.kicad_python import find_kicad_python
 
+from .locale_env import can_name, non_utf8_env, run_python
+
 ROOT_UUID = "e63e39d7-6ac0-4ffd-8aa3-1841a4541b55"
 
 
@@ -203,6 +205,20 @@ class TestTemplateProject:
         assert pro["meta"]["filename"] == "shield.kicad_pro"
         assert pro["sheets"] == [[new_uuid, "Root"]]
 
+    @pytest.mark.parametrize("field", ["project_name", "title", "company"])
+    def test_text_that_is_not_valid_changes_no_file(self, tmp_path, template_base, field):
+        # A JSON string can hold a lone surrogate, which UTF-8 cannot encode.
+        args = {"project_name": "shield", "title": "T", "company": "C", field: "A\ud800"}
+        result = asyncio.run(create_kicad_project(str(tmp_path), template="Arduino_Mega", **args))
+        assert f"The {field} is not valid text" in result, result
+        assert list(tmp_path.iterdir()) == [tmp_path / "templates"]
+
+    def test_project_file_is_utf8_text(self, tmp_path, template_base):
+        # KiCad writes the project file as UTF-8 text, not with \u escapes.
+        asyncio.run(create_kicad_project(str(tmp_path), "电源板_لوحة", template="Arduino_Mega"))
+        pro = (tmp_path / "电源板_لوحة.kicad_pro").read_text(encoding="utf-8")
+        assert '"filename": "电源板_لوحة.kicad_pro"' in pro
+
     def test_template_by_path(self, tmp_path, template_base, monkeypatch):
         monkeypatch.setattr(project, "_kicad_template_dirs", lambda: [])
         out_dir = tmp_path / "proj"
@@ -266,6 +282,35 @@ class TestFindKicadPython:
     def test_nothing_found(self, monkeypatch, tmp_path):
         monkeypatch.setattr(kicad_python, "find_kicad_install", lambda: None)
         assert find_kicad_python() is None
+
+
+class TestRunKicadPython:
+    # Text in different scripts. On Linux and macOS an argument holds only the
+    # characters of the locale encoding, thus the test uses the texts that
+    # the encoding can hold.
+    TEXTS = ["电源板", "لوحة", "Плата", "řídicí", "𠀀"]
+    CODE = (
+        "from kicad_mcp_server.utils import kicad_python\n"
+        "kicad_python.find_kicad_python = lambda: sys.executable\n"
+        "script = 'import sys; print(sys.argv[1]); sys.stderr.write(sys.argv[1])'\n"
+        "r = kicad_python.run_kicad_python_sync(['-c', script, ARGS[0]])\n"
+        "result([r.returncode, r.stdout.decode('utf-8', 'replace'),\n"
+        "        r.stderr.decode('utf-8', 'replace')])\n"
+    )
+
+    @pytest.mark.parametrize("utf8_mode", [False, True])
+    def test_child_uses_utf8_in_a_locale_that_is_not_utf8(self, utf8_mode):
+        # The server and the child Python run in the same locale, as on a
+        # system that does not use UTF-8. The child must read its arguments
+        # as the server writes them, and write its output as UTF-8.
+        env, encoding = non_utf8_env()
+        texts = [text for text in self.TEXTS if can_name(text, encoding, utf8_mode)]
+        assert texts, encoding
+        for text in texts:
+            returncode, stdout, stderr = run_python(self.CODE, env, utf8_mode, text)
+            assert returncode == 0, stderr
+            assert stdout.strip() == text
+            assert stderr == text
 
 
 def _kicad_available() -> bool:

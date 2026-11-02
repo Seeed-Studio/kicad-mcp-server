@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 from ..server import mcp
-from ..utils.kicad_cli import run_kicad_cli
+from ..utils.kicad_cli import decode_output, run_kicad_cli
 from ..utils.kicad_version import get_pcb_version
 
 _KICAD_CLI_MISSING_MSG = """⚠️ kicad-cli not found (PATH or KiCad install directory).
@@ -251,7 +251,7 @@ async def export_gerber(
 
         async def _run(args: list[str]) -> tuple[int, str]:
             r = await run_kicad_cli(args, timeout=180)
-            return r.returncode, (r.stderr or b"").decode("utf-8", "replace").strip()
+            return r.returncode, decode_output(r.stderr).strip()
 
         # Gerbers first (required); drill is best-effort afterwards. Note the
         # subcommand is "gerbers" (plural) and the output flag is "-o", not
