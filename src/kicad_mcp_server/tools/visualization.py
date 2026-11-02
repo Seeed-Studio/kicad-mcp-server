@@ -16,7 +16,7 @@ from pathlib import Path
 from fastmcp.utilities.types import Image
 
 from ..server import mcp
-from ..utils.kicad_cli import run_kicad_cli
+from ..utils.kicad_cli import decode_output, run_kicad_cli
 
 _RENDER_SIDES = {"top", "bottom", "left", "right", "front", "back"}
 _RENDER_QUALITIES = {"basic", "high", "user", "job_settings"}
@@ -86,7 +86,7 @@ async def render_pcb(
         result = await run_kicad_cli(args, timeout=180)
 
         if result.returncode != 0 or not out.exists():
-            stderr = (result.stderr or b"").decode("utf-8", "replace").strip()
+            stderr = decode_output(result.stderr).strip()
             return (
                 f"❌ PCB render failed (kicad-cli rc={result.returncode}):\n\n"
                 f"{stderr or '(no stderr, and no output file produced)'}"
@@ -137,7 +137,7 @@ async def export_pcb_3d(
         result = await run_kicad_cli(args, timeout=300)
 
         if result.returncode != 0 or not out.exists():
-            stderr = (result.stderr or b"").decode("utf-8", "replace").strip()
+            stderr = decode_output(result.stderr).strip()
             return (
                 f"❌ STEP export failed (kicad-cli rc={result.returncode}):\n\n"
                 f"{stderr or '(no stderr, and no output file produced)'}"
@@ -194,7 +194,7 @@ async def export_schematic_svg(
         )
 
         if result.returncode != 0:
-            stderr = (result.stderr or b"").decode("utf-8", "replace").strip()
+            stderr = decode_output(result.stderr).strip()
             return (
                 f"❌ Schematic SVG export failed (kicad-cli rc={result.returncode}):\n\n"
                 f"{stderr or '(no stderr)'}"

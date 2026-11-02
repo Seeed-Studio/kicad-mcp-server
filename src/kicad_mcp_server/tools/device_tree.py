@@ -7,6 +7,7 @@ This module provides device tree source (.dts) generation capabilities including
 - SOC-specific device tree generation
 """
 
+import os
 from pathlib import Path
 
 from jinja2 import Template
@@ -521,8 +522,12 @@ Please specify a supported SOC family."""
             output = Path(output_path)
             output.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(output, "w") as f:
-                f.write(device_tree)
+            # UTF-8 on each platform, not the locale encoding (on Windows the
+            # code page of the region). The text is encoded before the file
+            # opens, thus an encode error keeps the old file. The line ends
+            # are those of text mode, as before.
+            data = device_tree.encode("utf-8")
+            output.write_bytes(data.replace(b"\n", os.linesep.encode("ascii")))
 
             return f"""OK **Device Tree Generated Successfully**
 

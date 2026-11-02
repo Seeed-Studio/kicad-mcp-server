@@ -13,8 +13,8 @@ from datetime import datetime
 from pathlib import Path
 
 from ..server import mcp
-from ..utils.kicad_cli import get_kicad_version, run_kicad_cli
-from ..utils.kicad_python import find_kicad_python, run_kicad_python
+from ..utils.kicad_cli import decode_output, get_kicad_version, run_kicad_cli
+from ..utils.kicad_python import decode_python_output, find_kicad_python, run_kicad_python
 from ..utils.kicad_version import find_kicad_install
 
 EMPTY_TEMPLATE = "empty"
@@ -168,7 +168,8 @@ def _personalize_template_project(
         pro_data.setdefault("meta", {})["filename"] = pro_file.name
         if pro_data.get("sheets"):
             pro_data["sheets"] = [[root_uuid, "Root"]]
-        pro_file.write_text(json.dumps(pro_data, indent=2), encoding="utf-8")
+        # KiCad writes the project file as UTF-8 text, not with \u escapes.
+        pro_file.write_text(json.dumps(pro_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 async def _create_empty_project(
@@ -183,8 +184,7 @@ async def _create_empty_project(
     result = await run_kicad_python(["-c", _NEW_BOARD_SCRIPT, str(pcb_file), title, company, date])
     if result.returncode != 0:
         raise RuntimeError(
-            "pcbnew could not create the board:\n"
-            + result.stderr.decode(errors="replace").strip()
+            "pcbnew could not create the board:\n" + decode_python_output(result.stderr).strip()
         )
 
     sch_file = path / f"{project_name}.kicad_sch"
@@ -196,7 +196,7 @@ async def _create_empty_project(
     try:
         upgrade = await run_kicad_cli(["sch", "upgrade", str(sch_file)], timeout=120)
         if upgrade.returncode != 0:
-            upgrade_failure = upgrade.stderr.decode(errors="replace").strip()
+            upgrade_failure = decode_output(upgrade.stderr).strip()
     except FileNotFoundError as e:
         upgrade_failure = str(e)
     if upgrade_failure is not None:
@@ -240,6 +240,14 @@ async def create_kicad_project(
     Returns:
         Confirmation message with created files
     """
+    # KiCad writes these values into its files as UTF-8. Check them before any
+    # file changes, so that a value that is not valid text (a lone surrogate)
+    # does not leave a project that is only partly made.
+    for field, value in (("project_name", project_name), ("title", title), ("company", company)):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as e:
+            return f"❌ The {field} is not valid text: {e}"
     try:
         path = Path(project_path)
         date_str = datetime.now().strftime("%Y-%m-%d")

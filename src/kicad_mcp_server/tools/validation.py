@@ -13,7 +13,7 @@ from ..parsers.check_report_parser import (
     parse_erc_report,
 )
 from ..server import mcp
-from ..utils.kicad_cli import english_env, run_kicad_cli
+from ..utils.kicad_cli import decode_output, run_kicad_cli
 
 
 def _temp_dir() -> Path:
@@ -358,10 +358,10 @@ async def run_erc(
                 str(sch_path),
             ],
             timeout=60,
-            env=english_env(),
+            english=True,
         )
 
-        stderr_text = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+        stderr_text = decode_output(result.stderr)
 
         if result.returncode != 0:
             return f"""❌ **ERC Check Failed**
@@ -524,10 +524,10 @@ async def run_drc(
         result = await run_kicad_cli(
             args + ["--output", str(drc_report_path), str(pcb)],
             timeout=60,
-            env=english_env(),
+            english=True,
         )
 
-        stderr_text = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+        stderr_text = decode_output(result.stderr)
 
         if result.returncode != 0:
             return f"""❌ **DRC Check Failed**
