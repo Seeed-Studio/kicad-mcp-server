@@ -4,6 +4,7 @@ import re
 import uuid
 from pathlib import Path
 
+from ..parsers.sexpr import STRING, quote, unquote
 from ..server import mcp
 
 
@@ -69,7 +70,7 @@ def _extract_symbol_from_kicad_sym(kicad_sym_path: Path, symbol_name: str) -> st
         return None
 
     # Match the top-level symbol definition (not sub-symbols like "R_0_1")
-    pattern = r'\(symbol\s+"' + re.escape(symbol_name) + r'"(?!\w)'
+    pattern = r"\(symbol\s+" + re.escape(quote(symbol_name))
     match = re.search(pattern, content)
     if not match:
         return None
@@ -102,9 +103,10 @@ def _convert_symbol_to_lib_symbols_format(
     result = symbol_block
 
     # Prefix the symbol name with library name
+    lib_id = quote(f"{library_name}:{symbol_name}")
     result = re.sub(
-        r'\(symbol\s+"' + re.escape(symbol_name) + r'"',
-        f'(symbol "{library_name}:{symbol_name}"',
+        r"\(symbol\s+" + re.escape(quote(symbol_name)),
+        lambda _m: f"(symbol {lib_id}",
         result,
         count=1,
     )
@@ -152,7 +154,7 @@ def _symbol_exists_in_lib_symbols(content: str, lib_id: str) -> bool:
         return False
     # Search from lib_symbols start for the symbol
     section = content[ls_match.start() :]
-    return bool(re.search(r'\(symbol\s+"' + re.escape(lib_id) + r'"', section))
+    return bool(re.search(r"\(symbol\s+" + re.escape(quote(lib_id)), section))
 
 
 def _insert_symbol_into_lib_symbols(content: str, symbol_text: str) -> str:
@@ -194,13 +196,13 @@ def _extract_pins_from_symbol_block(symbol_block: str) -> list[tuple[str, str, s
     pins = []
     pin_pattern = re.compile(
         r"\(pin\s+(\w+)\s+\w+\s+[\s\S]*?"
-        r'\(name\s+"([^"]*)"[\s\S]*?\)'
-        r'\s*\(number\s+"([^"]*)"',
+        rf"\(name\s+({STRING})[\s\S]*?\)"
+        rf"\s*\(number\s+({STRING})",
     )
     for m in pin_pattern.finditer(symbol_block):
         elec_type = m.group(1)
-        pin_name = m.group(2)
-        pin_number = m.group(3)
+        pin_name = unquote(m.group(2))
+        pin_number = unquote(m.group(3))
         pins.append((pin_number, elec_type, pin_name))
     return pins
 
@@ -213,7 +215,7 @@ _PIN_GEOM_RE = re.compile(
     r"\(pin\s+(?P<etype>\w+)\s+\w+\s+"
     r"\(at\s+(?P<x>-?[\d.]+)\s+(?P<y>-?[\d.]+)\s+(?P<angle>-?[\d.]+)\)"
     r"[\s\S]*?"
-    r'\(number\s+"(?P<number>[^"]*)"'
+    rf"\(number\s+(?P<number>{STRING})"
 )
 
 
@@ -235,7 +237,7 @@ def _lib_symbols_block(content: str) -> str:
 
 
 def _symbol_def_block(lib_block: str, lib_id: str) -> str | None:
-    m = re.search(r'\(symbol\s+"' + re.escape(lib_id) + r'"(?!\w)', lib_block)
+    m = re.search(r"\(symbol\s+" + re.escape(quote(lib_id)), lib_block)
     if not m:
         return None
     start = m.start()
@@ -257,8 +259,8 @@ def _lib_pin_offset(symbol_block: str, lib_id: str, unit: int, pin: str) -> tupl
     "<name>_<unit>_<convert>" form); unit 0 = common to all units.
     """
     base = lib_id.split(":")[-1]
-    for sub_m in re.finditer(r'\(symbol\s+"([^"]+)"', symbol_block):
-        sub_name = sub_m.group(1)
+    for sub_m in re.finditer(rf"\(symbol\s+({STRING})", symbol_block):
+        sub_name = unquote(sub_m.group(1))
         if sub_name == lib_id:
             continue
         sub_unit = None
@@ -280,7 +282,7 @@ def _lib_pin_offset(symbol_block: str, lib_id: str, unit: int, pin: str) -> tupl
                 if depth == 0:
                     break
         for pm in _PIN_GEOM_RE.finditer(symbol_block[start : i + 1]):
-            if pm.group("number") == pin:
+            if unquote(pm.group("number")) == pin:
                 return float(pm.group("x")), float(pm.group("y"))
     return None
 
@@ -294,26 +296,27 @@ def _pin_anchor(content: str, reference: str, pin: str) -> tuple[float, float, i
     """
     lib = _lib_symbols_block(content)
     inst_re = re.compile(
-        r'\(symbol\s+\(lib_id\s+"(?P<lib_id>[^"]+)"\)\s+'
+        rf"\(symbol\s+\(lib_id\s+(?P<lib_id>{STRING})\)\s+"
         r"\(at\s+(?P<x>-?[\d.]+)\s+(?P<y>-?[\d.]+)\s+(?P<angle>-?[\d.]+)\)\s+"
         r"\(unit\s+(?P<unit>\d+)\)"
     )
     body = content.replace(lib, "") if lib else content
     for m in inst_re.finditer(body):
         tail = body[m.start() : m.start() + 4000]
-        ref_m = re.search(r'\(property\s+"Reference"\s+"([^"]*)"', tail)
-        if not ref_m or ref_m.group(1) != reference:
+        ref_m = re.search(rf'\(property\s+"Reference"\s+({STRING})', tail)
+        if not ref_m or unquote(ref_m.group(1)) != reference:
             continue
+        lib_id = unquote(m.group("lib_id"))
         ix, iy, iangle, unit = (
             float(m.group("x")),
             float(m.group("y")),
             float(m.group("angle")),
             int(m.group("unit")),
         )
-        block = _symbol_def_block(lib, m.group("lib_id"))
+        block = _symbol_def_block(lib, lib_id)
         if block is None:
             return None
-        offset = _lib_pin_offset(block, m.group("lib_id"), unit, pin)
+        offset = _lib_pin_offset(block, lib_id, unit, pin)
         if offset is None:
             return None
         dx, dy = offset
@@ -343,6 +346,31 @@ def _append_top_level(content: str, entry: str) -> str:
 _LABEL_SHAPES = ("input", "output", "bidirectional", "tri_state", "passive")
 
 _JUSTIFY = {0: "left", 180: "right", 90: "bottom", 270: "top"}
+
+
+def _multiline_label_error(name: str) -> str | None:
+    """Return an error if the label name has a line break, else None.
+
+    A KiCad label holds one line of text (``SetMultilineAllowed( false )``
+    in ``eeschema/sch_label.cpp``).
+    """
+    if "\n" in name or "\r" in name:
+        return f"❌ The label name {name!r} has a line break. A KiCad label holds one line of text."
+    return None
+
+
+def _field_error(field: str, value: str) -> str | None:
+    """Return an error if KiCad does not accept the value of a symbol field, else None.
+
+    A symbol field cannot hold a line break or a tab (``FIELD_VALIDATOR`` in
+    ``common/validators.cpp``).
+    """
+    if any(c in value for c in "\r\n\t"):
+        return (
+            f"❌ The {field} {value!r} has a line break or a tab. "
+            f"A KiCad symbol field cannot hold these characters."
+        )
+    return None
 
 
 def _resolve_label_target(
@@ -398,6 +426,9 @@ async def add_hierarchical_label(
     """
     if shape not in _LABEL_SHAPES:
         return f"❌ Invalid shape '{shape}'. Options: {', '.join(_LABEL_SHAPES)}"
+    name = label_name or f"{reference}.{pin}"
+    if error := _multiline_label_error(name):
+        return error
     try:
         path = Path(file_path)
         if not path.exists():
@@ -408,10 +439,9 @@ async def add_hierarchical_label(
             return resolved
         content, ax, ay, angle = resolved
 
-        name = label_name or f"{reference}.{pin}"
         justify = _JUSTIFY.get(angle, "left")
         entry = (
-            f'\t(hierarchical_label "{name}" (shape {shape}) (at {round(ax, 3)} {round(ay, 3)} {angle})\n'
+            f'\t(hierarchical_label {quote(name)} (shape {shape}) (at {round(ax, 3)} {round(ay, 3)} {angle})\n'
             f"\t\t(effects (font (size 1.27 1.27)) (justify {justify}))\n"
             f'\t\t(uuid "{uuid.uuid4()}")\n'
             f"\t)\n"
@@ -458,6 +488,8 @@ async def add_global_label(
     """
     if shape not in _LABEL_SHAPES:
         return f"❌ Invalid shape '{shape}'. Options: {', '.join(_LABEL_SHAPES)}"
+    if error := _multiline_label_error(label_name):
+        return error
     try:
         path = Path(file_path)
         if not path.exists():
@@ -470,7 +502,7 @@ async def add_global_label(
 
         justify = _JUSTIFY.get(angle, "left")
         entry = (
-            f'\t(global_label "{label_name}" (shape {shape}) (at {round(ax, 3)} {round(ay, 3)} {angle})\n'
+            f'\t(global_label {quote(label_name)} (shape {shape}) (at {round(ax, 3)} {round(ay, 3)} {angle})\n'
             f"\t\t(effects (font (size 1.27 1.27)) (justify {justify}))\n"
             f'\t\t(uuid "{uuid.uuid4()}")\n'
             f'\t\t(property "Intersheetrefs" "${{INTERSHEET_REFS}}" (at 0 0 0)\n'
@@ -502,6 +534,9 @@ async def add_component_from_library(
     unit: int = 1,
 ) -> str:
     """Add a component from KiCad's built-in library to the schematic."""
+    for field, text in (("Reference", reference), ("Value", value), ("Footprint", footprint)):
+        if error := _field_error(field, text):
+            return error
     try:
         path = Path(file_path)
         if not path.exists():
@@ -536,7 +571,7 @@ async def add_component_from_library(
         pin_entries = []
         for pin_num, _pin_type, _pin_name in pins:
             pin_uuid = str(uuid.uuid4())
-            pin_entries.append(f'    (pin "{pin_num}" (uuid "{pin_uuid}"))')
+            pin_entries.append(f'    (pin {quote(str(pin_num))} (uuid "{pin_uuid}"))')
         pins_str = "\n".join(pin_entries) if pin_entries else ""
 
         # --- Insert component instance ---
@@ -546,16 +581,16 @@ async def add_component_from_library(
         # template/Arduino_Mega/Arduino_Mega.kicad_sch. Adding one is silently
         # accepted by lenient parsers (sexpdata, kicad-skip) but makes KiCad's own
         # strict loader (kicad-cli and the GUI) refuse to open the file at all.
-        component_entry = f'''  (symbol (lib_id "{lib_id}") (at {x} {y} 0) (unit {unit})
+        component_entry = f'''  (symbol (lib_id {quote(lib_id)}) (at {x} {y} 0) (unit {unit})
   (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)
   (uuid "{comp_uuid}")
-  (property "Reference" "{reference}" (at {x} {y - 5} 0)
+  (property "Reference" {quote(reference)} (at {x} {y - 5} 0)
     (effects (font (size 1.27 1.27)))
   )
-  (property "Value" "{value}" (at {x} {y + 2.54} 0)
+  (property "Value" {quote(value)} (at {x} {y + 2.54} 0)
     (effects (font (size 1.27 1.27)))
   )
-  (property "Footprint" "{footprint}" (at {x} {y + 5.08} 0)
+  (property "Footprint" {quote(footprint)} (at {x} {y + 5.08} 0)
     (effects (font (size 1.27 1.27)) (hide yes))
   )
 {pins_str}
@@ -645,6 +680,8 @@ async def add_label(
     orientation: float = 0,
 ) -> str:
     """Add a local label (text label) to the schematic."""
+    if error := _multiline_label_error(text):
+        return error
     try:
         path = Path(file_path)
         if not path.exists():
@@ -652,7 +689,7 @@ async def add_label(
 
         content = path.read_text()
         label_uuid = str(uuid.uuid4())
-        label_entry = f"""  (label "{text}" (at {x} {y} {orientation})
+        label_entry = f"""  (label {quote(text)} (at {x} {y} {orientation})
     (effects (font (size 1.27 1.27)) (justify left))
     (uuid "{label_uuid}")
   )"""
