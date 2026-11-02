@@ -49,7 +49,14 @@ class AmbiguousRootError(Exception):
 
 
 def _unquote(token: str) -> str:
-    return re.sub(r"\\(.)", r"\1", token[1:-1])
+    value = re.sub(r"\\(.)", r"\1", token[1:-1])
+    # KiCad reads a string that is not valid UTF-8 as an empty string
+    # (DSNLEXER::FromUTF8()). Such bytes are lone surrogates here.
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return ""
+    return value
 
 
 def _sheet_file_names(content: str) -> list[str]:
@@ -96,16 +103,19 @@ def _sheet_file_names(content: str) -> list[str]:
 def _schematic_sheet_file_names(path: Path) -> list[str]:
     """Return the sheet file names of a schematic file, with a cache.
 
+    KiCad loads a file that is not valid UTF-8: it reads each string with an
+    invalid byte as an empty string. The structure of the file stays, thus the
+    bytes are decoded with surrogateescape and not refused.
+
     Raises:
         OSError: The file cannot be read.
-        ValueError: The file is not UTF-8, or its parentheses are not
-            balanced.
+        ValueError: The parentheses are not balanced.
     """
     data = path.read_bytes()
     key = hashlib.blake2b(data, digest_size=16).digest()
     names = _NAMES_CACHE.get(key)
     if names is None:
-        names = _sheet_file_names(data.decode("utf-8"))
+        names = _sheet_file_names(data.decode("utf-8", errors="surrogateescape"))
         if len(_NAMES_CACHE) >= _NAMES_CACHE_SIZE:
             _NAMES_CACHE.clear()
         _NAMES_CACHE[key] = names
@@ -147,8 +157,9 @@ def sheet_files(root: Path) -> list[Path]:
     text variables, and it makes a relative name absolute with the directory
     of the parent sheet. Each file is in the list one time, also when the
     hierarchy uses it more than one time. A missing file is not in the list.
-    A file that KiCad cannot load (not UTF-8, unbalanced parentheses) is not
-    in the list.
+    A file that KiCad cannot load (unbalanced parentheses) is not in the list.
+    A file that is not valid UTF-8 is in the list, as in KiCad. A sheet file
+    name that is empty (KiCad reads an invalid name as empty) gives no file.
     """
     root = Path(os.path.abspath(root))
     variables = _text_variables(root)
@@ -167,6 +178,8 @@ def sheet_files(root: Path) -> list[Path]:
         seen.add(real)
         found.append(sheet)
         for name in names:
+            if not name:
+                continue
             child = Path(_expand(name, variables))
             if not child.is_absolute():
                 child = sheet.parent / child

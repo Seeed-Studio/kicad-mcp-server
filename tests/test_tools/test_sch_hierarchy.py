@@ -68,6 +68,11 @@ class TestSheetFileNames:
         with pytest.raises(ValueError):
             _sheet_file_names(content)
 
+    def test_invalid_utf8_name_is_empty(self):
+        # KiCad reads a string that is not valid UTF-8 as an empty string.
+        content = sch("a\udcff.kicad_sch", "b.kicad_sch")
+        assert _sheet_file_names(content) == ["", "b.kicad_sch"]
+
     def test_kicad_fixture(self):
         content = (FIXTURES / "hier" / "root.kicad_sch").read_text(encoding="utf-8")
         assert _sheet_file_names(content) == ["child.kicad_sch", "missing.kicad_sch"]
@@ -96,6 +101,23 @@ class TestSheetFiles:
 
     def test_missing_file_is_not_in_the_list(self, tmp_path):
         root = project(tmp_path, "board", "missing.kicad_sch")
+        assert sheet_files(root) == [root]
+
+    def test_sheet_that_is_not_valid_utf8_is_in_the_list(self, tmp_path):
+        # KiCad loads such a sheet: only the string with the invalid byte is
+        # empty. The sheets below it stay in the hierarchy.
+        root = project(tmp_path, "board", "a.kicad_sch")
+        a = tmp_path / "a.kicad_sch"
+        content = sch("b.kicad_sch").replace("(generator ", '(label "\udcff") (generator ')
+        a.write_bytes(content.encode("utf-8", errors="surrogateescape"))
+        b = write(tmp_path / "b.kicad_sch")
+        assert sheet_files(root) == [root, a, b]
+        assert find_root_schematic(b) == root
+
+    def test_sheet_file_name_that_is_not_valid_utf8_gives_no_file(self, tmp_path):
+        root = tmp_path / "board.kicad_sch"
+        write(tmp_path / "board.kicad_pro", "{}")
+        root.write_bytes(sch("\udcff.kicad_sch").encode("utf-8", errors="surrogateescape"))
         assert sheet_files(root) == [root]
 
     def test_project_text_variables_and_no_environment(self, tmp_path, monkeypatch):
