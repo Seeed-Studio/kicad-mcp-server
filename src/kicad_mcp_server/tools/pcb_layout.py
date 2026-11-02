@@ -4,6 +4,7 @@ import re
 import uuid
 from pathlib import Path
 
+from ..parsers.sexpr import quote
 from ..server import mcp
 from ..utils.kicad_cli import run_kicad_cli
 from ..utils.kicad_version import get_pcb_version
@@ -80,7 +81,7 @@ async def setup_pcb_layout(
   (paper "A4")
 
   (title_block
-    (title "{sch_path.stem}")
+    (title {quote(sch_path.stem)})
   )
 
   (layers

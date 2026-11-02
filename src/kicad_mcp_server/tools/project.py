@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from ..parsers.sexpr import STRING, quote
 from ..server import mcp
 from ..utils.kicad_cli import get_kicad_version, run_kicad_cli
 from ..utils.kicad_python import find_kicad_python, run_kicad_python
@@ -119,10 +120,6 @@ def _copy_template(template_dir: Path, dest_dir: Path, project_name: str) -> lis
     return created
 
 
-def _sexpr_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def _set_title_block(content: str, title: str, company: str, date: str) -> str:
     """Set title/date/company in a schematic's (title_block ...), creating it if absent."""
     if "(title_block" not in content:
@@ -137,8 +134,8 @@ def _set_title_block(content: str, title: str, company: str, date: str) -> str:
     for field, value in (("company", company), ("date", date), ("title", title)):
         if not value:
             continue
-        entry = f'({field} "{_sexpr_escape(value)}")'
-        pattern = rf'\({field} "(?:[^"\\]|\\.)*"\)'
+        entry = f"({field} {quote(value)})"
+        pattern = rf"\({field} {STRING}\)"
         if re.search(pattern, content):
             content = re.sub(pattern, lambda _m, e=entry: e, content, count=1)
         else:
