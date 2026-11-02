@@ -14,6 +14,7 @@ from pathlib import Path
 from ..parsers.netlist_parser import NetlistParser
 from ..parsers.schematic_parser import SchematicParser
 from ..server import mcp
+from ..utils.sch_hierarchy import find_root_schematic
 
 
 async def _ensure_netlist(sch_path: Path) -> Path | None:
@@ -24,17 +25,19 @@ async def _ensure_netlist(sch_path: Path) -> Path | None:
     via kicad-cli (auto-redirects to root schematic for sub-sheets).
 
     Returns the netlist Path, or None on failure.
+
+    Raises:
+        AmbiguousRootError: More than one root schematic holds the sheet. A
+            netlist of the sheet alone does not have all nets.
     """
     from .netlist import netlist_cache_path
 
     # Candidate schematics: the given sheet and, for sub-sheets, the root
     # schematic that generate_netlist redirects to.
-    pro_files = list(sch_path.parent.glob("*.kicad_pro"))
     candidates: list[Path] = [sch_path]
-    if len(pro_files) == 1:
-        root_sch = pro_files[0].with_suffix(".kicad_sch")
-        if root_sch.exists() and root_sch.resolve() != sch_path.resolve():
-            candidates.append(root_sch)
+    root_sch = find_root_schematic(sch_path)
+    if root_sch:
+        candidates.append(root_sch)
 
     def _probe() -> Path | None:
         for cand in candidates:

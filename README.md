@@ -256,7 +256,9 @@ Schematic editing is **experimental**. KiCad has no Python API for schematic edi
 Known limitations:
 - Wire connections may not form perfect electrical connections
 - Visual alignment is basic
-- KiCad must be closed and reopened to see file changes (no hot-reload)
+- The editing tools write the file directly. KiCad does not read a change to a file that it has open, and the next save in KiCad removes the change. Thus each editing tool refuses the write when KiCad has the file open (KiCad writes the lock file `~<file name>.lck` next to it). Close the schematic editor or the PCB editor before the edit, and open the file again after the edit.
+- After a crash of KiCad, the lock file stays and the tools refuse the write. Open the file in KiCad and close it again, or delete the lock file.
+- The schematic editor locks only the root schematic. To find the root schematic of a sub-sheet, the tools read the sheet hierarchy of the projects in the directory of the sub-sheet and in its parent directories. They cannot find the root schematic of a sub-sheet outside the directory tree of its project (for example `../common/power.kicad_sch`). Thus the tools do not see when KiCad has such a sub-sheet open.
 
 **Recommendation**: Use KiCad GUI for design work. Use this MCP server for analysis, validation, and code generation.
 

@@ -14,6 +14,7 @@ from ..parsers.check_report_parser import (
 )
 from ..server import mcp
 from ..utils.kicad_cli import english_env, run_kicad_cli
+from ..utils.sch_hierarchy import AmbiguousRootError, find_root_schematic, sheet_files
 
 
 def _temp_dir() -> Path:
@@ -34,14 +35,9 @@ def _report_path(source: Path, kind: str) -> Path:
     return report_dir / f"{source.stem}_{digest}_{kind}.json"
 
 
-def _schematic_files(sch_path: Path) -> list[Path]:
-    """Return the schematic files of the project of sch_path."""
-    return sorted(sch_path.parent.glob("*.kicad_sch"))
-
-
-def _erc_sources(sch_path: Path) -> list[Path]:
-    """Return the files that change the ERC result."""
-    return _schematic_files(sch_path) + sorted(sch_path.parent.glob("*.kicad_pro"))
+def _erc_sources(root: Path) -> list[Path]:
+    """Return the files that change the ERC result of a root schematic."""
+    return sheet_files(root) + sorted(root.parent.glob("*.kicad_pro"))
 
 
 def _drc_sources(pcb: Path) -> list[Path]:
@@ -50,7 +46,7 @@ def _drc_sources(pcb: Path) -> list[Path]:
         [pcb]
         + sorted(pcb.parent.glob("*.kicad_pro"))
         + sorted(pcb.parent.glob("*.kicad_dru"))
-        + _schematic_files(pcb)
+        + sheet_files(pcb.with_suffix(".kicad_sch"))
     )
 
 
@@ -139,22 +135,6 @@ def _count_text(errors: list[ERCError] | list[DRCError]) -> str:
     if excluded_count:
         text += f"\n- Excluded: {excluded_count}"
     return text
-
-
-def _find_root_schematic(sch_path: Path) -> Path | None:
-    """If sch_path is a sub-sheet, return the root schematic instead.
-
-    KiCad convention: root schematic has the same stem as the .kicad_pro file.
-    kicad-cli silently drops unnamed local nets when exporting from a sub-sheet,
-    so we detect this and redirect to the root schematic.
-    """
-    pro_files = list(sch_path.parent.glob("*.kicad_pro"))
-    if not pro_files:
-        return None
-    root_sch = pro_files[0].with_suffix(".kicad_sch")
-    if root_sch.exists() and root_sch.resolve() != sch_path.resolve():
-        return root_sch
-    return None
 
 
 def _parse_erc_report(
@@ -325,9 +305,13 @@ async def run_erc(
         if not sch_path.exists():
             return f"❌ **Schematic file not found:** {schematic_path}"
 
-        # Detect sub-sheet and redirect to root schematic
+        # Detect sub-sheet and redirect to root schematic. kicad-cli drops
+        # unnamed local nets when it checks a sub-sheet alone.
         subsheet_note = ""
-        root_sch = _find_root_schematic(sch_path)
+        try:
+            root_sch = find_root_schematic(sch_path)
+        except AmbiguousRootError as e:
+            return f"❌ **{e}.** Run the check on the root schematic that you want."
         if root_sch:
             subsheet_note = (
                 f"\n\n⚠️ **Note:** `{sch_path.name}` is a hierarchical sub-sheet. "
@@ -397,7 +381,7 @@ verified. Ensure KiCad 9+ is installed and the schematic has a matching
 
         # Parse and format results
         try:
-            errors = _parse_erc_report(erc_report_path, _schematic_files(sch_path))
+            errors = _parse_erc_report(erc_report_path, sheet_files(sch_path))
 
             if not any(not e.excluded for e in errors):
                 excluded_note = (
@@ -680,7 +664,10 @@ async def get_erc_violations(
         # ERC report output path. run_erc redirects sub-sheets to the root
         # schematic, so the report is named after the ROOT schematic — not
         # the (possibly sub-sheet) input, which would never match.
-        root = _find_root_schematic(sch_path) or sch_path
+        try:
+            root = find_root_schematic(sch_path) or sch_path
+        except AmbiguousRootError as e:
+            return f"❌ **{e}.** Run the check on the root schematic that you want."
         erc_report_path = _report_path(root, "erc")
 
         if _report_is_stale(erc_report_path, _erc_sources(root)):
@@ -691,7 +678,7 @@ async def get_erc_violations(
                 return initial_result
 
         # Parse ERC report
-        errors = _parse_erc_report(erc_report_path, _schematic_files(root))
+        errors = _parse_erc_report(erc_report_path, sheet_files(root))
 
         if not errors:
             return f"""✅ **No ERC Violations**
@@ -845,7 +832,10 @@ async def export_erc_report(
             return f"❌ **Schematic file not found:** {schematic_path}"
 
         # ERC report path. run_erc writes the report of the root schematic.
-        root = _find_root_schematic(sch_path) or sch_path
+        try:
+            root = find_root_schematic(sch_path) or sch_path
+        except AmbiguousRootError as e:
+            return f"❌ **{e}.** Run the check on the root schematic that you want."
         erc_report_path = _report_path(root, "erc")
 
         # Run ERC first to generate a current report. run_erc gives "❌" also

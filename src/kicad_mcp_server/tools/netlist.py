@@ -7,6 +7,7 @@ from pathlib import Path
 from ..parsers.netlist_parser import NetlistParser
 from ..server import mcp
 from ..utils.kicad_cli import run_kicad_cli
+from ..utils.sch_hierarchy import AmbiguousRootError, find_root_schematic
 
 
 def netlist_cache_path(sch_path: Path) -> Path:
@@ -18,22 +19,6 @@ def netlist_cache_path(sch_path: Path) -> Path:
     """
     digest = hashlib.sha256(str(sch_path.resolve()).encode("utf-8")).hexdigest()[:8]
     return Path(tempfile.gettempdir()) / f"{sch_path.stem}_{digest}.xml"
-
-
-def _find_root_schematic(sch_path: Path) -> Path | None:
-    """If sch_path is a sub-sheet, return the root schematic instead.
-
-    KiCad convention: root schematic has the same stem as the .kicad_pro file.
-    Sub-sheets lack the hierarchy context needed to resolve unnamed wire-only
-    nets, so we redirect to the root schematic for complete netlist export.
-    """
-    pro_files = list(sch_path.parent.glob("*.kicad_pro"))
-    if len(pro_files) != 1:
-        return None
-    root_sch = pro_files[0].with_suffix(".kicad_sch")
-    if root_sch.exists() and root_sch.resolve() != sch_path.resolve():
-        return root_sch
-    return None
 
 
 @mcp.tool()
@@ -56,7 +41,10 @@ async def generate_netlist(
         # Detect sub-sheet and redirect to root schematic.
         # Sub-sheets lack hierarchy context to resolve unnamed wire-only nets.
         subsheet_note = ""
-        root_sch = _find_root_schematic(sch_path)
+        try:
+            root_sch = find_root_schematic(sch_path)
+        except AmbiguousRootError as e:
+            return f"❌ {e}. Generate the netlist of the root schematic that you want."
         if root_sch:
             subsheet_note = (
                 f"\n\n⚠️ **Note:** `{sch_path.name}` is a hierarchical sub-sheet. "

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..utils.file_handlers import validate_kicad_file
+from ..utils.sch_hierarchy import sheet_files
 
 # KiCad-defined boolean flags (fixed set, not user-extensible)
 KICAD_SYMBOL_FLAGS = ("dnp", "in_bom", "on_board", "exclude_from_sim")
@@ -495,7 +496,7 @@ class SchematicParser:
 
         Args:
             recursive: Also include components from hierarchical sub-sheets,
-                following Sheetfile references (depth-first, cycle-safe).
+                following Sheetfile references (each file one time, cycle-safe).
                 Real designs keep most components in sub-sheets, so callers
                 that cross-reference a full-hierarchy netlist must pass True.
 
@@ -505,36 +506,18 @@ class SchematicParser:
         data = self._parse_file()
         components = [SchematicComponent.from_kicad_skip(c) for c in data["components"]]
         if recursive:
-            seen = {str(self.file_path.resolve())}
-            for sheet in data["sheets"]:
-                components.extend(self._collect_subsheet_components(sheet["file"], seen))
+            # sheet_files() resolves the sheet files as KiCad does. A missing
+            # or unparsable sub-sheet is skipped: a broken reference must not
+            # wipe out the components of the parent.
+            for sheet in sheet_files(self.file_path)[1:]:
+                try:
+                    sub_data = SchematicParser(str(sheet))._parse_file()
+                except (FileNotFoundError, ValueError, OSError):
+                    continue
+                components.extend(
+                    SchematicComponent.from_kicad_skip(c) for c in sub_data["components"]
+                )
             components = _merge_duplicate_references(components)
-        return components
-
-    def _collect_subsheet_components(
-        self, sheet_file: str, seen: set[str]
-    ) -> list[SchematicComponent]:
-        """Recursively collect components from a referenced sub-sheet.
-
-        Missing or unparsable sub-sheets are skipped (a broken reference
-        must not wipe out the parent's components).
-        """
-        sub_path = self.file_path.parent / sheet_file
-        try:
-            key = str(sub_path.resolve())
-        except OSError:
-            return []
-        if key in seen or not sub_path.is_file():
-            return []
-        seen.add(key)
-        try:
-            sub = SchematicParser(str(sub_path))
-            sub_data = sub._parse_file()
-        except (FileNotFoundError, ValueError, OSError):
-            return []
-        components = [SchematicComponent.from_kicad_skip(c) for c in sub_data["components"]]
-        for sheet in sub_data["sheets"]:
-            components.extend(sub._collect_subsheet_components(sheet["file"], seen))
         return components
 
     def get_nets(self) -> list[SchematicNet]:

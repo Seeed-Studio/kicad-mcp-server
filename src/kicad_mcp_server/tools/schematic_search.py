@@ -27,6 +27,7 @@ async def search_components_by_type(
         from pathlib import Path
 
         from ..parsers.netlist_parser import NetlistParser
+        from ..utils.sch_hierarchy import AmbiguousRootError
         from .pin_analysis import _ensure_netlist
 
         parser = SchematicParser(file_path)
@@ -36,7 +37,12 @@ async def search_components_by_type(
         # the netlist (the authoritative pin<->net map).
         comp_nets: dict[str, set[str]] = {}
         comp_pins_map: dict[str, list[tuple[str, str]]] = {}
-        netlist_path = await _ensure_netlist(Path(file_path))
+        # The netlist only adds the nets of each component, thus the search
+        # continues without it.
+        try:
+            netlist_path = await _ensure_netlist(Path(file_path))
+        except AmbiguousRootError:
+            netlist_path = None
         if netlist_path:
             nl = NetlistParser(str(netlist_path))
             for ref, comp in nl.get_components().items():
