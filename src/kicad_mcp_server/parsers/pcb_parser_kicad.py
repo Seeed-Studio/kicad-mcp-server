@@ -112,6 +112,18 @@ class PCBParserKiCad:
         """Convert KiCad position to (x_mm, y_mm)."""
         return (pos.x / 1e6, pos.y / 1e6)
 
+    def _tracks(self) -> list:
+        """Return the tracks, arcs and vias of the board.
+
+        BOARD.GetTracks() iterates with it.next() in KiCad 10.0.6 and earlier.
+        SWIG 4.4 and later do not have this method, thus the iteration fails
+        (KiCad issue 25423, fixed in KiCad 10.0.7). Access by index works with
+        each SWIG version. Cast() gives the type of each item (PCB_TRACK,
+        PCB_ARC, PCB_VIA), as the iterator of KiCad does.
+        """
+        tracks = self.board.Tracks()
+        return [tracks[i].Cast() for i in range(len(tracks))]
+
     def _layer_name(self, layer_id_or_name) -> str:
         """Get canonical layer name (F.Cu, B.Cu, In1.Cu, etc.)."""
         raw = self.board.GetLayerName(layer_id_or_name)
@@ -170,7 +182,7 @@ class PCBParserKiCad:
         """Get all track segments (excludes vias)."""
         pcbnew = self._pcbnew
         tracks = []
-        for track in self.board.GetTracks():
+        for track in self._tracks():
             if isinstance(track, pcbnew.PCB_VIA):
                 continue
             tracks.append(PCBTrack(
@@ -193,7 +205,7 @@ class PCBParserKiCad:
         """Get all vias (uses GetWidth(layer) to avoid headless assert)."""
         pcbnew = self._pcbnew
         vias = []
-        for track in self.board.GetTracks():
+        for track in self._tracks():
             if not isinstance(track, pcbnew.PCB_VIA):
                 continue
             top_layer = track.TopLayer()
@@ -245,11 +257,11 @@ class PCBParserKiCad:
             "board_height_mm": self._to_mm(size.y),
             "footprints_count": len(self.board.GetFootprints()),
             "tracks_count": sum(
-                1 for t in self.board.GetTracks()
+                1 for t in self._tracks()
                 if not isinstance(t, self._pcbnew.PCB_VIA)
             ),
             "vias_count": sum(
-                1 for t in self.board.GetTracks()
+                1 for t in self._tracks()
                 if isinstance(t, self._pcbnew.PCB_VIA)
             ),
             "nets_count": self.board.GetNetCount(),
