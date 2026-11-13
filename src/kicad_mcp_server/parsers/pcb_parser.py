@@ -148,7 +148,7 @@ class PCBParser:
 
             # Search forward for the (at ...) line, within a reasonable distance
             search_area = content[start_pos:start_pos + 500]
-            at_match = re.search(r'\(at\s+([\d.]+)\s+([\d.]+)(?:\s+([\d.\-]+))?\)', search_area)
+            at_match = re.search(r'\(at\s+(-?[\d.]+)\s+(-?[\d.]+)(?:\s+(-?[\d.]+))?\)', search_area)
 
             if at_match:
                 x = float(at_match.group(1))
@@ -215,70 +215,155 @@ class PCBParser:
 
         return footprints
 
+    def _top_level_blocks(self, content: str) -> dict[str, list[str]]:
+        """Split the board into its direct children, grouped by keyword.
+
+        Track and via fields are matched inside each block rather than with
+        one positional regex, so field order, extra fields, negative
+        coordinates and both net syntaxes (KiCad 9: ``(net 3)``, KiCad 10:
+        ``(net "name")``) are all handled. Quoted strings are skipped while
+        counting parentheses.
+        """
+        cached = getattr(self, "_blocks_cache", None)
+        if cached is not None and cached[0] is content:
+            return cached[1]
+
+        blocks: dict[str, list[str]] = {}
+        depth = 0
+        in_str = False
+        escaped = False
+        block_start = -1
+        for i, ch in enumerate(content):
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "(":
+                depth += 1
+                if depth == 2:
+                    block_start = i
+            elif ch == ")":
+                if depth == 2 and block_start >= 0:
+                    block = content[block_start:i + 1]
+                    m = re.match(r"\(([A-Za-z_]+)", block)
+                    if m:
+                        blocks.setdefault(m.group(1), []).append(block)
+                    block_start = -1
+                depth -= 1
+
+        self._blocks_cache = (content, blocks)
+        return blocks
+
+    def _net_names(self, content: str) -> dict[str, str]:
+        """Map net codes to names from the KiCad 9 top-level net table."""
+        names: dict[str, str] = {}
+        for block in self._top_level_blocks(content).get("net", []):
+            m = re.match(r'\(net\s+(\d+)\s+"((?:[^"\\]|\\.)*)"', block)
+            if m:
+                names[m.group(1)] = m.group(2)
+        return names
+
+    @staticmethod
+    def _block_net(block: str, net_names: dict[str, str]) -> str:
+        """Net name of a track/via block, for KiCad 9 codes and KiCad 10 names."""
+        m = re.search(r'\(net\s+(?:"((?:[^"\\]|\\.)*)"|(\d+))', block)
+        if not m:
+            return ""
+        if m.group(1) is not None:
+            return m.group(1)
+        return net_names.get(m.group(2), "")
+
+    @staticmethod
+    def _xy(block: str, key: str) -> tuple[float, float] | None:
+        m = re.search(rf"\({key}\s+(-?[\d.]+)\s+(-?[\d.]+)", block)
+        return (float(m.group(1)), float(m.group(2))) if m else None
+
+    @staticmethod
+    def _arc_length(
+        p1: tuple[float, float], pm: tuple[float, float], p2: tuple[float, float]
+    ) -> float:
+        """Length of the circular arc through start, mid and end."""
+        import math
+
+        ax, ay = p1
+        bx, by = pm
+        cx, cy = p2
+        d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+        if abs(d) < 1e-12:  # collinear: treat as straight
+            return math.dist(p1, p2)
+        ux = ((ax**2 + ay**2) * (by - cy) + (bx**2 + by**2) * (cy - ay)
+              + (cx**2 + cy**2) * (ay - by)) / d
+        uy = ((ax**2 + ay**2) * (cx - bx) + (bx**2 + by**2) * (ax - cx)
+              + (cx**2 + cy**2) * (bx - ax)) / d
+        r = math.dist((ux, uy), p1)
+        a1 = math.atan2(ay - uy, ax - ux)
+        am = math.atan2(by - uy, bx - ux)
+        a2 = math.atan2(cy - uy, cx - ux)
+        # sweep from a1 to a2 in the direction that passes through am
+        sweep = (a2 - a1) % (2 * math.pi)
+        if (am - a1) % (2 * math.pi) > sweep:
+            sweep = 2 * math.pi - sweep
+        return r * sweep
+
     def _parse_tracks(self, content: str) -> list[dict[str, Any]]:
-        """Parse track segments."""
+        """Parse track segments and arc tracks."""
         tracks = []
+        blocks = self._top_level_blocks(content)
+        net_names = self._net_names(content)
 
-        # KiCad 10 format: (segment (start x y) (end x y) (width w) (layer "...") (net "name") (uuid "..."))
-        # The net field uses quoted string: (net "netname")
-        segment_pattern = (
-            r'\(segment\s+'
-            r'\(start\s+([\d.]+)\s+([\d.]+)\)\s+'
-            r'\(end\s+([\d.]+)\s+([\d.]+)\)\s+'
-            r'\(width\s+([\d.]+)\)\s+'
-            r'\(layer\s+"([^"]+)"\)\s+'
-            r'\(net\s+"([^"]*)"\)'
-        )
-
-        for match in re.finditer(segment_pattern, content):
-            x1, y1 = float(match.group(1)), float(match.group(2))
-            x2, y2 = float(match.group(3)), float(match.group(4))
-            dx, dy = x2 - x1, y2 - y1
-            tracks.append({
-                "start": {"x": x1, "y": y1},
-                "end": {"x": x2, "y": y2},
-                "width": float(match.group(5)),
-                "layer": match.group(6),
-                "net": match.group(7),
-                "length": (dx * dx + dy * dy) ** 0.5,
-            })
+        for kind in ("segment", "arc"):
+            for block in blocks.get(kind, []):
+                start = self._xy(block, "start")
+                end = self._xy(block, "end")
+                width = re.search(r"\(width\s+([\d.]+)", block)
+                layer = re.search(r'\(layer\s+"([^"]+)"', block)
+                if not (start and end and width and layer):
+                    continue
+                if kind == "arc":
+                    mid = self._xy(block, "mid")
+                    length = (self._arc_length(start, mid, end) if mid
+                              else ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5)
+                else:
+                    length = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+                tracks.append({
+                    "type": kind,
+                    "start": {"x": start[0], "y": start[1]},
+                    "end": {"x": end[0], "y": end[1]},
+                    "width": float(width.group(1)),
+                    "layer": layer.group(1),
+                    "net": self._block_net(block, net_names),
+                    "length": length,
+                })
 
         return tracks
 
     def _parse_vias(self, content: str) -> list[dict[str, Any]]:
         """Parse vias."""
         vias = []
+        net_names = self._net_names(content)
 
-        # KiCad 10 format: (via (at x y) (size s) (drill d) (layers "L1" "L2") (free yes) (net "name") (uuid "..."))
-        via_pattern = (
-            r'\(via\s+'
-            r'\(at\s+([\d.]+)\s+([\d.]+)\)\s+'
-            r'\(size\s+([\d.]+)\)\s+'
-            r'\(drill\s+([\d.]+)\)\s+'
-            r'\(layers\s+"([^"]+)"\s+"([^"]+)"\)\s+'
-            r'(?:\(free\s+yes\)\s+)?'
-            r'(?:\(net\s+"([^"]*)"\)\s+)?'
-        )
-
-        for match in re.finditer(via_pattern, content):
+        for block in self._top_level_blocks(content).get("via", []):
+            at = self._xy(block, "at")
+            size = re.search(r"\(size\s+([\d.]+)", block)
+            drill = re.search(r"\(drill\s+([\d.]+)", block)
+            if not (at and size and drill):
+                continue
+            layers_m = re.search(r"\(layers((?:\s+\"[^\"]+\")+)\)", block)
+            layers = re.findall(r'"([^"]+)"', layers_m.group(1)) if layers_m else []
             vias.append({
-                "at": {"x": float(match.group(1)), "y": float(match.group(2))},
-                "size": float(match.group(3)),
-                "drill": float(match.group(4)),
-                "top_layer": match.group(5),
-                "bottom_layer": match.group(6),
-                "net": match.group(7) or "",
+                "at": {"x": at[0], "y": at[1]},
+                "size": float(size.group(1)),
+                "drill": float(drill.group(1)),
+                "top_layer": layers[0] if layers else "",
+                "bottom_layer": layers[-1] if layers else "",
+                "net": self._block_net(block, net_names),
             })
-
-        # Fallback: simpler pattern for single-layer via or older format
-        if not vias:
-            via_pattern_simple = r'\(via\s+\(at\s+([\d.]+)\s+([\d.]+)\)\s+\(size\s+([\d.]+)\)\s+\(drill\s+([\d.]+)'
-            for match in re.finditer(via_pattern_simple, content):
-                vias.append({
-                    "at": {"x": float(match.group(1)), "y": float(match.group(2))},
-                    "size": float(match.group(3)),
-                    "drill": float(match.group(4)),
-                })
 
         return vias
 
